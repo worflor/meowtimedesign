@@ -325,9 +325,9 @@ export async function resolveShellReleaseDigest(
 }
 
 async function authoritativeShellReleaseDigest(plan: Pick<ShellBuildPlan, "profileDigest" | "target">): Promise<Digest> {
-  const planned = optional("RELEASE_WORKFLOW_IDENTITY_DIGEST");
+  const planned = optional("RELEASE_CONTENT_IDENTITY_DIGEST");
   return planned.length > 0
-    ? requiredDigest("RELEASE_WORKFLOW_IDENTITY_DIGEST")
+    ? requiredDigest("RELEASE_CONTENT_IDENTITY_DIGEST")
     : await resolveShellReleaseDigest(plan);
 }
 
@@ -437,9 +437,9 @@ export async function resolveShellBuild(): Promise<void> {
   const planPath = required("RELEASE_SHELL_PLAN_JSON_PATH");
   const outputPath = required("RELEASE_SHELL_BUILD_JSON_PATH");
   const plan = validateShellBuildPlan(JSON.parse(readFileSync(planPath, "utf8")) as unknown, channel);
-  // Canonical workflow scenario receipts own proof reuse. The historical
-  // aggregate Shell proof is consulted only by non-workflow callers.
-  const smokeMatrix = optional("RELEASE_WORKFLOW_IDENTITY_DIGEST").length > 0
+  // The outer hash_skip boundary owns release smoke reuse. The historical
+  // aggregate Shell proof remains available only to callers outside that boundary.
+  const smokeMatrix = optional("RELEASE_CONTENT_IDENTITY_DIGEST").length > 0
     ? ""
     : optional("RELEASE_SHELL_SMOKE_MATRIX");
   const shellSpecDigest = smokeMatrix.length > 0

@@ -8,11 +8,6 @@ on:
         required: false
         type: string
         default: '{"include":[{"artifact_dir":"dmg","os":"mac","runner":"macos-14","target":"mac_arm64"},{"artifact_dir":"dmg","os":"mac","runner":"macos-15-intel","target":"mac_x64"},{"artifact_dir":"builder","os":"win","runner":"windows-latest","target":"win_x64"}]}'
-      attest_targets:
-        description: "Canonical JSON array of targets eligible for receipt-backed public attestation."
-        required: false
-        type: string
-        default: '[]'
       commit:
         description: "Candidate commit SHA from its manifest."
         required: true
@@ -37,21 +32,12 @@ on:
         description: "Exact occupied candidate version."
         required: true
         type: string
-      workflow_plan_artifact:
-        description: "Artifact containing the canonical workflow plan and request."
-        required: false
-        type: string
-        default: ""
   workflow_call:
     inputs:
       acceptance_matrix:
         required: false
         type: string
         default: '{"include":[{"artifact_dir":"dmg","os":"mac","runner":"macos-14","target":"mac_arm64"},{"artifact_dir":"dmg","os":"mac","runner":"macos-15-intel","target":"mac_x64"},{"artifact_dir":"builder","os":"win","runner":"windows-latest","target":"win_x64"}]}'
-      attest_targets:
-        required: false
-        type: string
-        default: '[]'
       commit:
         required: true
         type: string
@@ -70,10 +56,6 @@ on:
       release_version:
         required: true
         type: string
-      workflow_plan_artifact:
-        required: false
-        type: string
-        default: ""
 
 permissions:
   actions: write
@@ -111,12 +93,6 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Download canonical workflow plan for receipt registration
-        if: ${{ inputs.workflow_plan_artifact != '' }}
-        uses: actions/download-artifact@v8
-        with:
-          name: ${{ inputs.workflow_plan_artifact }}
-          path: ${{ runner.temp }}/release-workflow
       - name: Re-download immutable public ${{ matrix.target }} artifacts
         env:
           RELEASE_METADATA_URL: ${{ inputs.metadata_url }}
@@ -153,29 +129,6 @@ jobs:
           RELEASE_PUBLIC_ACCEPTANCE_SMOKE_SUMMARY_PATH: ${{ runner.temp }}/public-feedback/report/summary.json
           RELEASE_PUBLIC_ACCEPTANCE_SUITE_RESULT_PATH: ${{ runner.temp }}/public-feedback/report/suite-result.json
         run: pnpm exec tools-release issue-public-acceptance
-      - name: Prepare public lifecycle receipt registration
-        if: ${{ inputs.workflow_plan_artifact != '' }}
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const fs = require("fs");
-            const path = require("path");
-            const root = process.env.RUNNER_TEMP;
-            const registration = {
-              evidenceSource: "public-acceptance",
-              plan: JSON.parse(fs.readFileSync(path.join(root, "release-workflow", "plan.json"), "utf8")),
-              summary: JSON.parse(fs.readFileSync(path.join(root, "public-feedback", "report", "summary.json"), "utf8")),
-              target: "${{ matrix.target }}",
-            };
-            const output = path.join(root, "release-workflow", `public-registration-${registration.target}.json`);
-            fs.writeFileSync(output, `${JSON.stringify(registration, null, 2)}\n`);
-      - name: Upload accepted public ${{ matrix.target }} lifecycle registration
-        if: ${{ inputs.workflow_plan_artifact != '' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: open-design-${{ inputs.exact_name }}-${{ matrix.target }}-lifecycle-registration
-          path: ${{ runner.temp }}/release-workflow/public-registration-${{ matrix.target }}.json
-          if-no-files-found: error
       - name: Upload public ${{ matrix.target }} acceptance credential
         uses: actions/upload-artifact@v7
         with:
@@ -220,12 +173,6 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Download canonical workflow plan
-        if: ${{ inputs.attest_targets != '[]' }}
-        uses: actions/download-artifact@v8
-        with:
-          name: ${{ inputs.workflow_plan_artifact }}
-          path: ${{ runner.temp }}/release-workflow
       - name: Download all public acceptance credentials
         if: ${{ inputs.acceptance_matrix != '{"include":[]}' }}
         uses: actions/download-artifact@v8
@@ -233,47 +180,6 @@ jobs:
           pattern: open-design-${{ inputs.exact_name }}-*-public-acceptance
           merge-multiple: true
           path: ${{ runner.temp }}/public-acceptance
-      - name: Download accepted public lifecycle registrations
-        if: ${{ inputs.acceptance_matrix != '{"include":[]}' }}
-        uses: actions/download-artifact@v8
-        with:
-          pattern: open-design-${{ inputs.exact_name }}-*-lifecycle-registration
-          merge-multiple: true
-          path: ${{ runner.temp }}/release-workflow/public-registrations
-      - name: Register accepted public lifecycle receipts
-        if: ${{ inputs.acceptance_matrix != '{"include":[]}' }}
-        env:
-          RELEASE_STORAGE_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_RELEASES_AK }}
-          RELEASE_STORAGE_BUCKET: ${{ secrets.CLOUDFLARE_R2_RELEASES_BUCKET }}
-          RELEASE_STORAGE_ENDPOINT: ${{ secrets.CLOUDFLARE_R2_RELEASES_URL }}
-          RELEASE_STORAGE_REGION: auto
-          RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_RELEASES_SK }}
-        run: |
-          set -euo pipefail
-          for registration in "$RUNNER_TEMP"/release-workflow/public-registrations/*.json; do
-            pnpm exec tools-release workflow register-scenario-receipts --input "$registration"
-          done
-      - name: Attest replayed lifecycle proofs against this public projection
-        if: ${{ inputs.attest_targets != '[]' }}
-        env:
-          RELEASE_METADATA_URL: ${{ inputs.metadata_url }}
-          RELEASE_MUTABLE_METADATA_URL: ${{ inputs.mutable_metadata_url }}
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/public-acceptance"
-          while IFS= read -r target; do
-            input="$RUNNER_TEMP/release-workflow/public-attestation-$target.json"
-            jq -n \
-              --arg credentialPath "$RUNNER_TEMP/public-acceptance/$target.json" \
-              --arg metadataUrl "$RELEASE_METADATA_URL" \
-              --arg mutableMetadataUrl "$RELEASE_MUTABLE_METADATA_URL" \
-              --arg target "$target" \
-              --slurpfile plan "$RUNNER_TEMP/release-workflow/plan.json" \
-              --slurpfile request "$RUNNER_TEMP/release-workflow/request.json" \
-              '{credentialPath: $credentialPath, metadataUrl: $metadataUrl, mutableMetadataUrl: $mutableMetadataUrl, plan: $plan[0], request: $request[0], target: $target}' \
-              > "$input"
-            pnpm exec tools-release workflow attest-public-target --input "$input"
-          done < <(jq -r '.[]' <<< '${{ inputs.attest_targets }}')
       - name: Issue stable qualification for accepted prerelease
         if: ${{ inputs.exact_name == 'prerelease' }}
         env:

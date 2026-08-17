@@ -114,7 +114,7 @@ runs:
         RELEASE_STORAGE_ENDPOINT: ${{ env.CLOUDFLARE_R2_RELEASES_URL }}
         RELEASE_STORAGE_REGION: auto
         RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ env.CLOUDFLARE_R2_RELEASES_SK }}
-        RELEASE_WORKFLOW_IDENTITY_DIGEST: ${{ inputs.shell-identity-digest }}
+        RELEASE_CONTENT_IDENTITY_DIGEST: ${{ inputs.shell-identity-digest }}
       run: |
         $ErrorActionPreference = "Stop"
         New-Item -ItemType Directory -Force -Path "${{ runner.temp }}\release-build\win_x64" | Out-Null
@@ -190,7 +190,7 @@ runs:
         RELEASE_STORAGE_ENDPOINT: ${{ env.CLOUDFLARE_R2_RELEASES_URL }}
         RELEASE_STORAGE_REGION: auto
         RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ env.CLOUDFLARE_R2_RELEASES_SK }}
-        RELEASE_WORKFLOW_IDENTITY_DIGEST: ${{ inputs.shell-identity-digest }}
+        RELEASE_CONTENT_IDENTITY_DIGEST: ${{ inputs.shell-identity-digest }}
       run: pnpm exec tools-release register-shell-build
     - name: Resolve win_x64 Standalone target contribution
       id: closure_target

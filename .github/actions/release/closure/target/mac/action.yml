@@ -7,7 +7,7 @@ inputs:
   channel:
     required: true
   identity-digest:
-    description: Canonical workflow identity digest for this Closure target node
+    description: Canonical content identity digest for this Closure target
     required: true
   platform:
     description: darwin-arm64 or darwin-x64

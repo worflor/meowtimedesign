@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { readIdentityRegistry, resolveIdentityDeclaration } from "../src/identity/declaration/registry.js";
+import { resolveReleaseTargetIdentities } from "../src/identity/resolution/release-targets.js";
 import { resolveReleaseIdentity, resolveReleaseWorkspaceRoot } from "../src/identity/resolution/resolve.js";
 
 const workspaceRoot = new URL("../../..", import.meta.url).pathname;
@@ -12,6 +13,22 @@ it("anchors runtime release identity to cwd rather than the bundled module locat
 const sourcePath = (...segments: string[]): string => segments.join("/");
 
 describe("release identity registry", () => {
+  it("resolves every release target without planning execution or replay", async () => {
+    const profile = (character: string) => `sha256:${character.repeat(64)}`;
+    const result = await resolveReleaseTargetIdentities({
+      minShellVersion: "0.19.4-beta.1",
+      shellProfiles: {
+        mac_arm64: profile("1"),
+        mac_x64: profile("2"),
+        win_x64: profile("3"),
+      },
+    }, workspaceRoot);
+    expect(result.buildMatrix.include.map(({ target }) => target)).toEqual(["mac_arm64", "mac_x64", "win_x64"]);
+    expect(result.buildMatrix.include.every(({ closure_identity_digest, shell_identity_digest }) =>
+      closure_identity_digest.startsWith("sha256:") && shell_identity_digest.startsWith("sha256:"))).toBe(true);
+    expect(result.sharedClosureIdentityDigest).toMatch(/^sha256:[0-9a-f]{64}$/u);
+  });
+
   it("owns Shell artifact sources while consuming only tools-pack's canonical profile digest", async () => {
     const registry = await readIdentityRegistry(workspaceRoot);
     const mac = resolveIdentityDeclaration(registry, "shell.build.darwin-arm64");

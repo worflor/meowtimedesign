@@ -5,7 +5,7 @@ inputs:
   channel:
     required: true
   identity-digest:
-    description: Canonical workflow identity digest for the shared Closure node
+    description: Canonical content identity digest for the shared Closure build
     required: true
   min-shell-version:
     description: Frozen initial Shell compatibility declaration for this channel

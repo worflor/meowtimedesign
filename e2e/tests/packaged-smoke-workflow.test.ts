@@ -1971,12 +1971,12 @@ process.stdin.on("end", () => {
     expect(releaseBetaWorkflow).toContain("closure-identity-digest: ${{ matrix.closure_identity_digest }}");
     expect(releaseBetaWorkflow).not.toContain("proof-state: ${{ matrix.proof_state }}");
     expect(releaseBetaWorkflow).toContain("shell-identity-digest: ${{ matrix.shell_identity_digest }}");
-    expect(betaMacAction).toContain("RELEASE_WORKFLOW_IDENTITY_DIGEST: ${{ inputs.shell-identity-digest }}");
+    expect(betaMacAction).toContain("RELEASE_CONTENT_IDENTITY_DIGEST: ${{ inputs.shell-identity-digest }}");
     expect(betaMacAction).not.toContain("workflow target-execution");
     expect(betaMacAction).not.toContain("tools-release identity digest");
     expect(betaMacAction).not.toContain("register-shell-smoke");
     expect(betaWinAction).toContain("RELEASE_SHELL_SMOKE_MATRIX: win-shell-v2");
-    expect(betaWinAction).toContain("RELEASE_WORKFLOW_IDENTITY_DIGEST: ${{ inputs.shell-identity-digest }}");
+    expect(betaWinAction).toContain("RELEASE_CONTENT_IDENTITY_DIGEST: ${{ inputs.shell-identity-digest }}");
     expect(betaWinAction).not.toContain("workflow target-execution");
     expect(betaWinAction).not.toContain("tools-release identity digest");
     expect(betaWinAction).not.toContain("register-shell-smoke");
@@ -2243,7 +2243,7 @@ process.stdin.on("end", () => {
     );
     const executionStep = sectionBetween(
       metadataJob,
-      "- name: Compile canonical release workflow plan",
+      "- name: Resolve release target identities",
       "- name: Materialize canonical shared Standalone Closure",
     );
 
@@ -2263,17 +2263,18 @@ process.stdin.on("end", () => {
     expect(metadataJob).toContain("commit: ${{ steps.identity.outputs.commit }}");
     expect(metadataJob).toContain("promote: ${{ inputs.promote }}");
     expect(metadataJob).toContain("uses: actions/github-script@v8");
-    expect(metadataJob).toContain('const profileRoot = path.join(process.env.RUNNER_TEMP, "release-workflow-profiles")');
+    expect(metadataJob).toContain('const profileRoot = path.join(process.env.RUNNER_TEMP, "release-identity-profiles")');
     expect(metadataJob).toContain('const profile = JSON.parse(result.stdout)');
-    expect(metadataJob).toContain('core.setOutput("build_matrix", JSON.stringify(execution.buildMatrix))');
+    expect(metadataJob).toContain('core.setOutput("build_matrix", JSON.stringify(identities.buildMatrix))');
     expect(executionStep).not.toContain("jq -");
     const manualDispatch = sectionBetween(betaWorkflow, "  workflow_dispatch:", "  workflow_call:");
     expect(manualDispatch).toContain("      promote:");
     expect(manualDispatch).toContain("        default: true");
     const buildJob = sectionBetween(betaWorkflow, "  build:", "  stage:");
     expect(buildJob).toContain("matrix: ${{ fromJSON(needs.metadata.outputs.build_matrix) }}");
-    expect(betaWorkflow).toContain("Compile canonical release workflow plan");
-    expect(betaWorkflow).toContain("Materialize replayed platform projections");
+    expect(betaWorkflow).toContain("Resolve release target identities");
+    expect(betaWorkflow).not.toContain("Materialize replayed platform projections");
+    expect(betaWorkflow).not.toContain("tools-release workflow");
     expect(buildJob).toContain("id: mac");
     expect(buildJob).toContain("id: win");
     expect(buildJob).toContain("open-design-${{ inputs.exact_name }}-${{ matrix.target }}-build-result");
@@ -2409,10 +2410,8 @@ process.stdin.on("end", () => {
     expect(distribution).toContain('"target":"mac_x64"');
     expect(distribution).toContain('"target":"win_x64"');
     expect(distribution).toContain("Issue public ${{ matrix.target }} acceptance credential");
-    expect(distribution).toContain('evidenceSource: "public-acceptance"');
-    expect(distribution).toContain("Upload accepted public ${{ matrix.target }} lifecycle registration");
-    expect(distribution).toContain("Register accepted public lifecycle receipts");
-    expect(distribution).toContain("workflow attest-public-target");
+    expect(distribution).not.toContain("lifecycle receipt");
+    expect(distribution).not.toContain("workflow attest-public-target");
   });
 
   it("[P1] skips the scheduled minor cut until the highest release branch is published stable", async () => {
@@ -2986,7 +2985,7 @@ process.stdin.on("end", () => {
     expect(workflow).toContain("closure_version: ${{ steps.reservation.outputs.release_version");
     expect(sharedJob).toContain("Materialize canonical shared Standalone Closure");
     expect(sharedJob).toContain("uses: ./.github/actions/release/closure/shared");
-    expect(sharedJob.indexOf('"workflow", "execution"')).toBeLessThan(sharedJob.indexOf("Materialize canonical shared Standalone Closure"));
+    expect(sharedJob.indexOf('"resolve-release-identities"')).toBeLessThan(sharedJob.indexOf("Materialize canonical shared Standalone Closure"));
     expect(sharedClosureAction).toContain("Build shared Closure components");
     expect(sharedClosureAction).not.toMatch(/id: closure_resolution\n\s+if:/u);
     expect(sharedClosureAction).toContain("tools-pack closure build-distribution-shared");
@@ -2995,10 +2994,8 @@ process.stdin.on("end", () => {
     expect(sharedClosureAction).toContain('cp -R "$blob_root"');
     expect(buildJob).toContain("OPEN_DESIGN_POSTINSTALL_LEVEL: release-smoke");
     expect(buildJob).toContain("matrix: ${{ fromJSON(needs.metadata.outputs.build_matrix) }}");
-    expect(sharedJob).toContain('"workflow", "execution"');
-    expect(sharedJob).toContain("Upload replayed mac_arm64 publish manifest");
-    expect(sharedJob).toContain("Upload replayed mac_x64 publish manifest");
-    expect(sharedJob).toContain("Upload replayed win_x64 publish manifest");
+    expect(sharedJob).toContain('"resolve-release-identities"');
+    expect(sharedJob).not.toContain("Upload replayed");
     for (const targetAction of [targetMacAction, targetWinAction]) {
       expect(targetAction).toContain("tools-release resolve-closure-build");
       expect(targetAction).not.toMatch(/id: resolve\n\s+if:/u);
@@ -3076,7 +3073,7 @@ process.stdin.on("end", () => {
     expect(publicAcceptanceJob).not.toContain("OD_PACKAGED_E2E_CLOSURE_BUILD_JSON_PATH");
     expect(publicAcceptanceJob).not.toContain("RELEASE_STORAGE_SECRET_ACCESS_KEY");
     expect(activationJob).toContain("needs.public_acceptance.result == 'success' || needs.public_acceptance.result == 'skipped'");
-    expect(activationJob).toContain("tools-release workflow attest-public-target");
+    expect(activationJob).not.toContain("tools-release workflow");
     expect(activationJob).toContain("tools-release activate-public-release");
     expect(activationJob).toContain("Activate accepted immutable exact metadata with CAS");
     expect(activationJob).toContain("Read back activated exact public feed");

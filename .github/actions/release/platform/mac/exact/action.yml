@@ -25,7 +25,7 @@ inputs:
     description: Exact Standalone Closure version
     required: true
   closure-identity-digest:
-    description: Canonical workflow identity digest for the Closure target node
+    description: Canonical content identity digest for the Closure target
     required: true
   candidate-enabled:
     description: Publish an unlisted candidate projection when publish is disabled
@@ -61,7 +61,7 @@ inputs:
     description: Exact immutable Electron Shell version
     required: true
   shell-identity-digest:
-    description: Canonical workflow identity digest for the Shell node
+    description: Canonical content identity digest for the Shell target
     required: true
   sign-mode:
     description: tools-pack macOS sign mode
@@ -144,7 +144,7 @@ runs:
         RELEASE_SHELL_SMOKE_MATRIX: ${{ inputs.shell-smoke-matrix }}
         RELEASE_SHELL_PLAN_JSON_PATH: ${{ runner.temp }}/release-build/${{ inputs.target }}/shell-plan.json
         RELEASE_STANDALONE_PROTOCOL_VERSION: "1"
-        RELEASE_WORKFLOW_IDENTITY_DIGEST: ${{ inputs.shell-identity-digest }}
+        RELEASE_CONTENT_IDENTITY_DIGEST: ${{ inputs.shell-identity-digest }}
         RELEASE_STORAGE_ACCESS_KEY_ID: ${{ env.CLOUDFLARE_R2_RELEASES_AK }}
         RELEASE_STORAGE_BUCKET: ${{ env.CLOUDFLARE_R2_RELEASES_BUCKET }}
         RELEASE_STORAGE_ENDPOINT: ${{ env.CLOUDFLARE_R2_RELEASES_URL }}
@@ -323,7 +323,7 @@ runs:
         RELEASE_PUBLIC_ORIGIN: ${{ inputs.release-public-origin != '' && inputs.release-public-origin || env.CLOUDFLARE_R2_RELEASES_PUBLIC_ORIGIN }}
         RELEASE_SHELL_BUILD_JSON_PATH: ${{ runner.temp }}/release-build/${{ inputs.target }}/build.json
         RELEASE_SHELL_PLAN_JSON_PATH: ${{ runner.temp }}/release-build/${{ inputs.target }}/shell-plan.json
-        RELEASE_WORKFLOW_IDENTITY_DIGEST: ${{ inputs.shell-identity-digest }}
+        RELEASE_CONTENT_IDENTITY_DIGEST: ${{ inputs.shell-identity-digest }}
         RELEASE_STORAGE_ACCESS_KEY_ID: ${{ env.CLOUDFLARE_R2_RELEASES_AK }}
         RELEASE_STORAGE_BUCKET: ${{ env.CLOUDFLARE_R2_RELEASES_BUCKET }}
         RELEASE_STORAGE_ENDPOINT: ${{ env.CLOUDFLARE_R2_RELEASES_URL }}

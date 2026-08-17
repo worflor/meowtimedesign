@@ -1,194 +1,8 @@
-import { readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { writeFileSync } from "node:fs";
 
 import { cac } from "cac";
 
 const cli = cac("tools-release");
-
-cli
-  .command("workflow <action>", "Seal the desktop workflow, compile a release plan, or register a receipt")
-  .option("--evidence-source <source>", "scenario receipt evidence source")
-  .option("--input <path>", "request or receipt JSON input")
-  .option("--output <path>", "write canonical JSON output")
-  .option("--plan <path>", "canonical workflow plan input")
-  .option("--root <path>", "workspace root (default: cwd)")
-  .option("--summary <path>", "scenario evidence summary input")
-  .option("--target <target>", "select one canonical release target")
-  .action(async (action: string, options: {
-    evidenceSource?: string;
-    input?: string;
-    output?: string;
-    plan?: string;
-    root?: string;
-    summary?: string;
-    target?: string;
-  }) => {
-    const { readIdentityRegistry } = await import("./identity/declaration/registry.ts");
-    const { resolveReleaseIdentity, resolveReleaseWorkspaceRoot } = await import("./identity/resolution/resolve.ts");
-    const {
-      createReleaseWorkflowReceiptResolver,
-      createReleaseWorkflowRequestFromEnv,
-      candidateTargetProjectionInputSchema,
-      attestWorkflowPublicTarget,
-      compileReleaseWorkflowExecution,
-      declareDesktopReleaseWorkflow,
-      materializeReplayTarget,
-      planReleaseWorkflow,
-      publicAttestationInputSchema,
-      projectCandidateTargetFromShellReceipt,
-      registerScenarioReceipts,
-      registerReleaseWorkflowReceipt,
-      releaseWorkflowExecutionInputSchema,
-      releaseWorkflowRequestSchema,
-      replayTargetMaterializationInputSchema,
-      scenarioReceiptRegistrationInputSchema,
-      selectReleaseWorkflowTargetExecution,
-    } = await import("./workflow/index.ts");
-    const workspaceRoot = resolveReleaseWorkspaceRoot(options.root);
-    const sealed = declareDesktopReleaseWorkflow(await readIdentityRegistry(workspaceRoot));
-    if (action === "manifest") {
-      const body = `${JSON.stringify({ digest: sealed.digest, manifest: sealed.manifest }, null, 2)}\n`;
-      if (options.output == null) process.stdout.write(body);
-      else writeFileSync(resolve(options.output), body, "utf8");
-      return;
-    }
-    if (action === "request") {
-      const request = createReleaseWorkflowRequestFromEnv({ workflowDigest: sealed.digest, workspaceRoot });
-      const body = `${JSON.stringify(request, null, 2)}\n`;
-      if (options.output == null) process.stdout.write(body);
-      else writeFileSync(resolve(options.output), body, "utf8");
-      return;
-    }
-    if (action === "register-scenario-receipts") {
-      const registration = scenarioReceiptRegistrationInputSchema.parse(options.input != null
-        ? JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown
-        : {
-            evidenceSource: options.evidenceSource,
-            plan: options.plan == null ? undefined : JSON.parse(readFileSync(resolve(options.plan), "utf8")) as unknown,
-            summary: options.summary == null ? undefined : JSON.parse(readFileSync(resolve(options.summary), "utf8")) as unknown,
-            target: options.target,
-          });
-      const { storageConfigFromEnv } = await import("./storage/common.ts");
-      const registered = await registerScenarioReceipts({
-        evidenceSource: registration.evidenceSource,
-        plan: registration.plan,
-        storage: storageConfigFromEnv(),
-        summary: registration.summary,
-        target: registration.target,
-      });
-      process.stdout.write(`${JSON.stringify(registered)}\n`);
-      return;
-    }
-    const input = options.input;
-    if (input == null) throw new Error(`workflow ${action} requires --input`);
-    if (action === "plan") {
-      const request = releaseWorkflowRequestSchema.parse(JSON.parse(readFileSync(resolve(input), "utf8")) as unknown);
-      const { storageConfigFromEnv } = await import("./storage/common.ts");
-      const plan = await planReleaseWorkflow(sealed.manifest, request, {
-        resolveIdentity: async ({ id, parameters }) => (await resolveReleaseIdentity({ id, parameters, workspaceRoot })).digest,
-        resolveReceipt: createReleaseWorkflowReceiptResolver({ request, storage: storageConfigFromEnv() }),
-      });
-      const body = `${JSON.stringify(plan, null, 2)}\n`;
-      if (options.output == null) process.stdout.write(body);
-      else writeFileSync(resolve(options.output), body, "utf8");
-      return;
-    }
-    if (action === "execution") {
-      const executionInput = releaseWorkflowExecutionInputSchema.parse(JSON.parse(readFileSync(resolve(input), "utf8")) as unknown);
-      const execution = compileReleaseWorkflowExecution(executionInput.plan, executionInput.request);
-      const body = `${JSON.stringify(execution, null, 2)}\n`;
-      if (options.output == null) process.stdout.write(body);
-      else writeFileSync(resolve(options.output), body, "utf8");
-      return;
-    }
-    if (action === "target-execution") {
-      if (options.target == null) throw new Error("workflow target-execution requires --target");
-      const execution = selectReleaseWorkflowTargetExecution(
-        JSON.parse(readFileSync(resolve(input), "utf8")) as unknown,
-        options.target,
-      );
-      const body = `${JSON.stringify(execution, null, 2)}\n`;
-      if (options.output == null) process.stdout.write(body);
-      else writeFileSync(resolve(options.output), body, "utf8");
-      return;
-    }
-    if (action === "attest-public-target") {
-      const attestationInput = publicAttestationInputSchema.parse(JSON.parse(readFileSync(resolve(input), "utf8")) as unknown);
-      const credential = await attestWorkflowPublicTarget(attestationInput);
-      const body = `${JSON.stringify(credential, null, 2)}\n`;
-      if (options.output == null) process.stdout.write(body);
-      else writeFileSync(resolve(options.output), body, "utf8");
-      return;
-    }
-    if (action === "project-candidate-target") {
-      const projection = candidateTargetProjectionInputSchema.parse(JSON.parse(readFileSync(resolve(input), "utf8")) as unknown);
-      const { storageConfigFromEnv } = await import("./storage/common.ts");
-      const result = await projectCandidateTargetFromShellReceipt({
-        candidateId: projection.candidateId,
-        channel: projection.channel,
-        publicOrigin: projection.publicOrigin,
-        receipt: projection.receipt,
-        releaseVersion: projection.releaseVersion,
-        storage: storageConfigFromEnv(),
-        target: projection.target,
-      });
-      const body = `${JSON.stringify(result, null, 2)}\n`;
-      if (options.output == null) process.stdout.write(body);
-      else writeFileSync(resolve(options.output), body, "utf8");
-      return;
-    }
-    if (action === "materialize-replay-target") {
-      const projection = replayTargetMaterializationInputSchema.parse(JSON.parse(readFileSync(resolve(input), "utf8")) as unknown);
-      const { storageConfigFromEnv } = await import("./storage/common.ts");
-      const request = projection.request;
-      const targetName = projection.target;
-      const target = request.targets.find(({ name }) => name === targetName);
-      if (target == null) throw new Error(`release request does not select ${targetName}`);
-      const outputRoot = resolve(projection.outputRoot);
-      const result = await materializeReplayTarget({
-        candidateId: projection.candidateId,
-        outputRoot,
-        plan: projection.plan,
-        request,
-        storage: storageConfigFromEnv(),
-        target: targetName,
-      });
-      Object.assign(process.env, {
-        OPEN_DESIGN_AMR_PROFILE: request.release.profile,
-        RELEASE_ARTIFACT_MODE: targetName.startsWith("mac_") ? (target.buildTarget === "all" ? "all" : "dmg-and-payload") : "",
-        RELEASE_ASSET_SUFFIX: target.signMode === "unsigned" ? ".unsigned" : ".signed",
-        RELEASE_ASSETS_DIR: resolve(outputRoot, "release-assets", targetName),
-        RELEASE_CHANNEL: request.release.channel,
-        RELEASE_CLOSURE_ENABLED: "false",
-        RELEASE_MANIFEST_DIR: result.platformManifestDir,
-        RELEASE_OUTPUTS_PATH: result.platformOutputsPath,
-        RELEASE_PUBLIC_ORIGIN: request.release.publicOrigin,
-        RELEASE_PUBLISH_SIDE_EFFECTS: "true",
-        RELEASE_SHELL_BUILD_JSON_PATH: result.shellBuildPath,
-        RELEASE_SHELL_ENABLED: "true",
-        RELEASE_SHELL_REMOTE_PROJECTION: "true",
-        RELEASE_TARGET: targetName,
-        RELEASE_VERSION: request.release.releaseVersion,
-        RELEASE_VERSION_LOCK_REQUIRED: request.release.channel === "stable" ? "false" : "true",
-        WIN_INCLUDE_ZIP: target.buildTarget === "all" || target.buildTarget === "zip" ? "true" : "false",
-      });
-      await import("./storage/publish-platform.ts");
-      const body = `${JSON.stringify(result, null, 2)}\n`;
-      if (options.output == null) process.stdout.write(body);
-      else writeFileSync(resolve(options.output), body, "utf8");
-      return;
-    }
-    if (action === "register-receipt") {
-      const { storageConfigFromEnv } = await import("./storage/common.ts");
-      const state = await registerReleaseWorkflowReceipt(
-        storageConfigFromEnv(),
-        JSON.parse(readFileSync(resolve(input), "utf8")) as unknown,
-      );
-      process.stdout.write(`${state}\n`);
-      return;
-    }
-    throw new Error(`unsupported workflow action: ${action}`);
-  });
 
 cli
   .command("identity <action> <id>", "Resolve or print one declared release identity")
@@ -218,6 +32,17 @@ cli
       return;
     }
     throw new Error(`identity action must be resolve or digest; got ${action}`);
+  });
+
+cli
+  .command("resolve-release-identities", "Resolve reusable release target content identities")
+  .option("--input <path>", "JSON identity parameters")
+  .option("--output <path>", "write the resolved identity bundle")
+  .option("--root <path>", "workspace root (default: cwd)")
+  .action(async (options: { input?: string; output?: string; root?: string }) => {
+    if (options.input == null) throw new Error("resolve-release-identities requires --input");
+    const { resolveReleaseTargetIdentitiesCli } = await import("./identity/resolution/release-targets.ts");
+    await resolveReleaseTargetIdentitiesCli({ input: options.input, output: options.output, root: options.root });
   });
 
 cli
