@@ -27,6 +27,14 @@ function timingEvidence(summary: unknown, scenario: string): Record<string, unkn
   return timing as Record<string, unknown>;
 }
 
+function transferableEvidence(summary: unknown, scenario: string): Record<string, unknown> {
+  const timing = timingEvidence(summary, scenario);
+  if (!scenario.endsWith("shell-lifecycle")) return { timing };
+  const record = summary as Record<string, unknown>;
+  if (record.coldStart == null) throw new Error(`Shell smoke summary has no cold-start evidence for ${scenario}`);
+  return { coldStart: record.coldStart, timing };
+}
+
 export async function registerScenarioReceipts(input: Readonly<{
   plan: unknown;
   registerReceipt?: typeof registerReleaseWorkflowReceipt;
@@ -45,7 +53,7 @@ export async function registerScenarioReceipts(input: Readonly<{
   for (const node of nodes) {
     const scenario = node.inputs.semantic.scenario;
     if (typeof scenario !== "string") throw new Error(`proof node ${node.nodeId} has no scenario binding`);
-    const evidence = timingEvidence(input.summary, scenario);
+    const evidence = transferableEvidence(input.summary, scenario);
     const evidenceDigest = metadataDigest(canonicalMetadataJson({ evidence, scenario }));
     await registerReceipt(input.storage, {
       definitionDigest: node.definitionDigest,

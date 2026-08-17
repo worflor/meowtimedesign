@@ -65,7 +65,7 @@ export type PublicAcceptancePlan = {
   target: ReleaseTarget;
 };
 
-export type PublicAcceptanceCredential = {
+type PublicAcceptanceCredentialBase = {
   acceptedAt: string;
   artifact: PublicArtifactBinding;
   artifactKind: PublicArtifactKind;
@@ -76,6 +76,11 @@ export type PublicAcceptanceCredential = {
   namespace: string;
   platformManifest: PublicArtifactBinding;
   releaseVersion: string;
+  status: "accepted";
+  target: ReleaseTarget;
+};
+
+export type PublicAcceptanceCredential = PublicAcceptanceCredentialBase & ({
   schemaVersion: 3;
   smoke: {
     profile: string;
@@ -83,9 +88,18 @@ export type PublicAcceptanceCredential = {
     status: "success";
     summaryDigest: string;
   };
-  status: "accepted";
-  target: ReleaseTarget;
-};
+} | {
+  schemaVersion: 4;
+  workflowProof: {
+    checkedObjects: number;
+    mode: "canonical-receipt-and-public-projection";
+    nodeId: string;
+    projectionDigest: string;
+    receiptDigest: string;
+    semanticDigest: string;
+    sourceRecordedAt: string;
+  };
+});
 
 export function assertRecord(value: unknown, label: string): asserts value is JsonRecord {
   if (value == null || typeof value !== "object" || Array.isArray(value)) {
@@ -497,7 +511,7 @@ function parsePlan(value: unknown): PublicAcceptancePlan {
 export function parseCredential(value: unknown): PublicAcceptanceCredential {
   assertRecord(value, "public acceptance credential");
   if (
-    value.schemaVersion !== 3
+    (value.schemaVersion !== 3 && value.schemaVersion !== 4)
     || typeof value.target !== "string"
     || !(value.target in targetDefinitions)
     || value.status !== "accepted"
@@ -510,22 +524,50 @@ export function parseCredential(value: unknown): PublicAcceptanceCredential {
   if (closure.target !== definition.closureTarget || value.artifactKind !== definition.artifactKind) {
     throw new Error("public acceptance credential target binding is invalid");
   }
-  const smoke = childRecord(value, "smoke", "public acceptance credential");
   const coldStart = parsePublicColdStartEvidence(value.coldStart);
   if (coldStart.target !== closure.target) {
     throw new Error("public acceptance coldStart target binding is invalid");
   }
-  if (
-    smoke.status !== "success"
-    || smoke.profile !== "core"
-    || !Array.isArray(smoke.selectedLanes)
-    || smoke.selectedLanes.length !== 1
-    || smoke.selectedLanes[0] !== "shell"
-  ) {
-    throw new Error("public acceptance credential smoke proof is invalid");
+  let evidence: Pick<PublicAcceptanceCredential, "schemaVersion"> & Record<string, unknown>;
+  if (value.schemaVersion === 3) {
+    const smoke = childRecord(value, "smoke", "public acceptance credential");
+    if (
+      smoke.status !== "success"
+      || smoke.profile !== "core"
+      || !Array.isArray(smoke.selectedLanes)
+      || smoke.selectedLanes.length !== 1
+      || smoke.selectedLanes[0] !== "shell"
+    ) throw new Error("public acceptance credential smoke proof is invalid");
+    const summaryDigest = stringField(smoke, "summaryDigest", "credential.smoke");
+    assertDigest(summaryDigest, "credential.smoke.summaryDigest");
+    evidence = { schemaVersion: 3, smoke: { profile: "core", selectedLanes: ["shell"], status: "success", summaryDigest } };
+  } else {
+    const proof = childRecord(value, "workflowProof", "public acceptance credential");
+    const semanticDigest = stringField(proof, "semanticDigest", "credential.workflowProof");
+    const receiptDigest = stringField(proof, "receiptDigest", "credential.workflowProof");
+    const projectionDigest = stringField(proof, "projectionDigest", "credential.workflowProof");
+    assertDigest(semanticDigest, "credential.workflowProof.semanticDigest");
+    assertDigest(receiptDigest, "credential.workflowProof.receiptDigest");
+    assertDigest(projectionDigest, "credential.workflowProof.projectionDigest");
+    if (
+      proof.mode !== "canonical-receipt-and-public-projection"
+      || !Number.isSafeInteger(proof.checkedObjects)
+      || Number(proof.checkedObjects) < 1
+      || !Number.isFinite(Date.parse(stringField(proof, "sourceRecordedAt", "credential.workflowProof")))
+    ) throw new Error("public acceptance workflow proof is invalid");
+    evidence = {
+      schemaVersion: 4,
+      workflowProof: {
+        checkedObjects: proof.checkedObjects,
+        mode: "canonical-receipt-and-public-projection",
+        nodeId: stringField(proof, "nodeId", "credential.workflowProof"),
+        projectionDigest,
+        receiptDigest,
+        semanticDigest,
+        sourceRecordedAt: stringField(proof, "sourceRecordedAt", "credential.workflowProof"),
+      },
+    };
   }
-  const summaryDigest = stringField(smoke, "summaryDigest", "credential.smoke");
-  assertDigest(summaryDigest, "credential.smoke.summaryDigest");
   const releaseVersion = stringField(value, "releaseVersion", "credential");
   const commit = stringField(value, "commit", "credential");
   if (!/^[0-9a-f]{40}$/u.test(commit)) throw new Error("public acceptance credential commit must be a full SHA");
@@ -543,16 +585,10 @@ export function parseCredential(value: unknown): PublicAcceptanceCredential {
       "public acceptance credential.platformManifest",
     ),
     releaseVersion,
-    schemaVersion: 3,
-    smoke: {
-      profile: "core",
-      selectedLanes: ["shell"],
-      status: "success",
-      summaryDigest,
-    },
+    ...evidence,
     status: "accepted",
     target,
-  };
+  } as PublicAcceptanceCredential;
 }
 
 export async function issuePublicAcceptance(input: {

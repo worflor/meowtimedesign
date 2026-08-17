@@ -145,6 +145,8 @@ jobs:
       mac_arm64_execution: ${{ steps.execution.outputs.mac_arm64_execution }}
       mac_x64_execution: ${{ steps.execution.outputs.mac_x64_execution }}
       win_x64_execution: ${{ steps.execution.outputs.win_x64_execution }}
+      acceptance_matrix: ${{ steps.execution.outputs.acceptance_matrix }}
+      attest_targets: ${{ steps.execution.outputs.attest_targets }}
     steps:
       - name: Validate checkout ref shape
         env:
@@ -368,14 +370,18 @@ jobs:
             '{plan: $plan[0], request: $request[0]}' > "$workflow_root/execution-input.json"
           pnpm exec tools-release workflow execution --input "$workflow_root/execution-input.json" --output "$workflow_root/execution.json"
           build_matrix="$(jq -c '.buildMatrix' "$workflow_root/execution.json")"
-          echo "build_matrix=$build_matrix" >> "$GITHUB_OUTPUT"
-          for target in mac_arm64 mac_x64 win_x64; do
-            if jq -e --arg target "$target" '.replayTargets | index($target) != null' "$workflow_root/execution.json" >/dev/null; then
-              echo "${target}_execution=replay" >> "$GITHUB_OUTPUT"
-            else
-              echo "${target}_execution=execute" >> "$GITHUB_OUTPUT"
-            fi
-          done
+          {
+            echo "build_matrix=$build_matrix"
+            echo "acceptance_matrix=$(jq -c '.acceptanceMatrix' "$workflow_root/execution.json")"
+            echo "attest_targets=$(jq -c '.attestTargets' "$workflow_root/execution.json")"
+            for target in mac_arm64 mac_x64 win_x64; do
+              if jq -e --arg target "$target" '.replayTargets | index($target) != null' "$workflow_root/execution.json" >/dev/null; then
+                echo "${target}_execution=replay"
+              else
+                echo "${target}_execution=execute"
+              fi
+            done
+          } >> "$GITHUB_OUTPUT"
           {
             echo "### Canonical workflow plan"
             echo
@@ -911,12 +917,15 @@ jobs:
     uses: ./.github/workflows/distribution-exact-accept.yml
     secrets: inherit
     with:
+      acceptance_matrix: ${{ needs.metadata.outputs.acceptance_matrix }}
+      attest_targets: ${{ needs.metadata.outputs.attest_targets }}
       commit: ${{ needs.metadata.outputs.commit }}
       exact_name: ${{ inputs.exact_name }}
       metadata_url: ${{ needs.stage.outputs.version_metadata_url }}
       mutable_metadata_url: ${{ needs.stage.outputs.acceptance_latest_url }}
       public_origin: ${{ inputs.release_public_origin != '' && inputs.release_public_origin || vars.CLOUDFLARE_R2_RELEASES_PUBLIC_ORIGIN }}
       release_version: ${{ needs.metadata.outputs.release_version }}
+      workflow_plan_artifact: open-design-${{ inputs.exact_name }}-workflow-plan
 
   notify:
     name: Report exact release

@@ -2367,10 +2367,12 @@ process.stdin.on("end", () => {
     }
     expect(mac).toContain("root: join(toolsPackDir, 'runtime', 'mac')");
     expect(mac).not.toContain("root: join(homedir(), 'Library', 'Application Support'");
-    expect(distribution).toContain("target: mac_arm64");
-    expect(distribution).toContain("target: mac_x64");
-    expect(distribution).toContain("target: win_x64");
+    expect(distribution).toContain("matrix: ${{ fromJSON(inputs.acceptance_matrix) }}");
+    expect(distribution).toContain('"target":"mac_arm64"');
+    expect(distribution).toContain('"target":"mac_x64"');
+    expect(distribution).toContain('"target":"win_x64"');
     expect(distribution).toContain("Issue public ${{ matrix.target }} acceptance credential");
+    expect(distribution).toContain("workflow attest-public-target");
   });
 
   it("[P1] skips the scheduled minor cut until the highest release branch is published stable", async () => {
@@ -3017,9 +3019,7 @@ process.stdin.on("end", () => {
     expect(workflow).toContain("RELEASE_WIN_X64_SIGN_MODE: unsigned");
     expect(stageJob).not.toContain("Observe directly activated beta public feed");
     expect(publicAcceptanceJob).toContain("runs-on: ${{ matrix.runner }}");
-    expect(publicAcceptanceJob).toContain("target: mac_arm64");
-    expect(publicAcceptanceJob).toContain("target: mac_x64");
-    expect(publicAcceptanceJob).toContain("target: win_x64");
+    expect(publicAcceptanceJob).toContain("matrix: ${{ fromJSON(inputs.acceptance_matrix) }}");
     expect(publicAcceptanceJob).toContain("OPEN_DESIGN_POSTINSTALL_LEVEL: release-smoke");
     expect(publicAcceptanceJob).toContain("tools-release prepare-public-acceptance");
     expect(publicAcceptanceJob).toContain("tools-release issue-public-acceptance");
@@ -3030,7 +3030,8 @@ process.stdin.on("end", () => {
     expect(publicAcceptanceJob).not.toContain("OD_PACKAGED_CONFIG_PATH:");
     expect(publicAcceptanceJob).not.toContain("OD_PACKAGED_E2E_CLOSURE_BUILD_JSON_PATH");
     expect(publicAcceptanceJob).not.toContain("RELEASE_STORAGE_SECRET_ACCESS_KEY");
-    expect(activationJob).toContain("needs.public_acceptance.result == 'success'");
+    expect(activationJob).toContain("needs.public_acceptance.result == 'success' || needs.public_acceptance.result == 'skipped'");
+    expect(activationJob).toContain("tools-release workflow attest-public-target");
     expect(activationJob).toContain("tools-release activate-public-release");
     expect(activationJob).toContain("Activate accepted immutable exact metadata with CAS");
     expect(activationJob).toContain("Read back activated exact public feed");

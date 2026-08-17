@@ -134,7 +134,14 @@ describe("desktop ReleaseWorkflow", () => {
         return "created";
       },
       storage: {} as never,
-      summary: { timings: scenarios.map((step) => ({ lane: "shell", status: "success", step })) },
+      summary: {
+        coldStart: {
+          schemaVersion: 1,
+          status: "success",
+          timing: { launchDurationMs: 100, readinessBudgetMs: 300_000, readinessDurationMs: 200, totalDurationMs: 300 },
+        },
+        timings: scenarios.map((step) => ({ lane: "shell", status: "success", step })),
+      },
       target: "win_x64",
     });
     expect(registered).toHaveLength(5);

@@ -3,6 +3,16 @@ name: distribution-exact-accept
 on:
   workflow_dispatch:
     inputs:
+      acceptance_matrix:
+        description: "Canonical JSON matrix of targets requiring installed public acceptance."
+        required: false
+        type: string
+        default: '{"include":[{"artifact_dir":"dmg","os":"mac","runner":"macos-14","target":"mac_arm64"},{"artifact_dir":"dmg","os":"mac","runner":"macos-15-intel","target":"mac_x64"},{"artifact_dir":"builder","os":"win","runner":"windows-latest","target":"win_x64"}]}'
+      attest_targets:
+        description: "Canonical JSON array of targets eligible for receipt-backed public attestation."
+        required: false
+        type: string
+        default: '[]'
       commit:
         description: "Candidate commit SHA from its manifest."
         required: true
@@ -27,8 +37,21 @@ on:
         description: "Exact occupied candidate version."
         required: true
         type: string
+      workflow_plan_artifact:
+        description: "Artifact containing the canonical workflow plan and request."
+        required: false
+        type: string
+        default: ""
   workflow_call:
     inputs:
+      acceptance_matrix:
+        required: false
+        type: string
+        default: '{"include":[{"artifact_dir":"dmg","os":"mac","runner":"macos-14","target":"mac_arm64"},{"artifact_dir":"dmg","os":"mac","runner":"macos-15-intel","target":"mac_x64"},{"artifact_dir":"builder","os":"win","runner":"windows-latest","target":"win_x64"}]}'
+      attest_targets:
+        required: false
+        type: string
+        default: '[]'
       commit:
         required: true
         type: string
@@ -47,6 +70,10 @@ on:
       release_version:
         required: true
         type: string
+      workflow_plan_artifact:
+        required: false
+        type: string
+        default: ""
 
 permissions:
   actions: write
@@ -57,29 +84,13 @@ jobs:
     name: Accept public ${{ matrix.target }} exact artifacts
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - artifact_dir: dmg
-            namespace: release-${{ inputs.exact_name }}
-            os: mac
-            runner: macos-14
-            target: mac_arm64
-          - artifact_dir: dmg
-            namespace: release-${{ inputs.exact_name }}-x64
-            os: mac
-            runner: macos-15-intel
-            target: mac_x64
-          - artifact_dir: builder
-            namespace: release-${{ inputs.exact_name }}-win
-            os: win
-            runner: windows-latest
-            target: win_x64
+      matrix: ${{ fromJSON(inputs.acceptance_matrix) }}
     runs-on: ${{ matrix.runner }}
     env:
       GITHUB_SHA: ${{ inputs.commit }}
       OPEN_DESIGN_POSTINSTALL_LEVEL: release-smoke
       RELEASE_COMMIT: ${{ inputs.commit }}
-      RELEASE_NAMESPACE: ${{ matrix.namespace }}
+      RELEASE_NAMESPACE: ${{ matrix.target == 'mac_arm64' && format('release-{0}', inputs.exact_name) || matrix.target == 'mac_x64' && format('release-{0}-x64', inputs.exact_name) || format('release-{0}-win', inputs.exact_name) }}
       RELEASE_PUBLIC_ORIGIN: ${{ inputs.public_origin }}
       RELEASE_TARGET: ${{ matrix.target }}
       RELEASE_VERSION: ${{ inputs.release_version }}
@@ -104,7 +115,7 @@ jobs:
         env:
           RELEASE_METADATA_URL: ${{ inputs.metadata_url }}
           RELEASE_PUBLIC_ACCEPTANCE_BUILD_JSON_PATH: ${{ runner.temp }}/public-feedback/build.json
-          RELEASE_PUBLIC_ACCEPTANCE_DOWNLOAD_DIR: ${{ runner.temp }}/public-feedback/tools-pack/out/${{ matrix.os }}/namespaces/${{ matrix.namespace }}/${{ matrix.artifact_dir }}
+          RELEASE_PUBLIC_ACCEPTANCE_DOWNLOAD_DIR: ${{ runner.temp }}/public-feedback/tools-pack/out/${{ matrix.os }}/namespaces/${{ env.RELEASE_NAMESPACE }}/${{ matrix.artifact_dir }}
           RELEASE_PUBLIC_ACCEPTANCE_PLAN_PATH: ${{ runner.temp }}/public-feedback/plan.json
         run: pnpm exec tools-release prepare-public-acceptance
       - name: Smoke immutable public ${{ matrix.target }} install and online Closure cold start
@@ -114,7 +125,7 @@ jobs:
           OD_PACKAGED_E2E_MAC: ${{ matrix.os == 'mac' && '1' || '' }}
           OD_PACKAGED_E2E_MAC_SMOKE_LANES: shell
           OD_PACKAGED_E2E_MAC_SMOKE_PROFILE: core
-          OD_PACKAGED_E2E_NAMESPACE: ${{ matrix.namespace }}
+          OD_PACKAGED_E2E_NAMESPACE: ${{ env.RELEASE_NAMESPACE }}
           OD_PACKAGED_E2E_RELEASE_CHANNEL: ${{ inputs.exact_name }}
           OD_PACKAGED_E2E_RELEASE_VERSION: ${{ inputs.release_version }}
           OD_PACKAGED_E2E_REPORT_DIR: ${{ runner.temp }}/public-feedback/report
@@ -156,7 +167,7 @@ jobs:
   activate:
     name: Activate accepted exact release
     needs: public_acceptance
-    if: ${{ !cancelled() && needs.public_acceptance.result == 'success' }}
+    if: ${{ !cancelled() && (needs.public_acceptance.result == 'success' || needs.public_acceptance.result == 'skipped') }}
     runs-on: ubuntu-latest
     env:
       OPEN_DESIGN_POSTINSTALL_LEVEL: release-prepare
@@ -180,12 +191,40 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Download canonical workflow plan
+        if: ${{ inputs.attest_targets != '[]' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.workflow_plan_artifact }}
+          path: ${{ runner.temp }}/release-workflow
       - name: Download all public acceptance credentials
+        if: ${{ inputs.acceptance_matrix != '{"include":[]}' }}
         uses: actions/download-artifact@v8
         with:
           pattern: open-design-${{ inputs.exact_name }}-*-public-acceptance
           merge-multiple: true
           path: ${{ runner.temp }}/public-acceptance
+      - name: Attest replayed lifecycle proofs against this public projection
+        if: ${{ inputs.attest_targets != '[]' }}
+        env:
+          RELEASE_METADATA_URL: ${{ inputs.metadata_url }}
+          RELEASE_MUTABLE_METADATA_URL: ${{ inputs.mutable_metadata_url }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/public-acceptance"
+          while IFS= read -r target; do
+            input="$RUNNER_TEMP/release-workflow/public-attestation-$target.json"
+            jq -n \
+              --arg credentialPath "$RUNNER_TEMP/public-acceptance/$target.json" \
+              --arg metadataUrl "$RELEASE_METADATA_URL" \
+              --arg mutableMetadataUrl "$RELEASE_MUTABLE_METADATA_URL" \
+              --arg target "$target" \
+              --slurpfile plan "$RUNNER_TEMP/release-workflow/plan.json" \
+              --slurpfile request "$RUNNER_TEMP/release-workflow/request.json" \
+              '{credentialPath: $credentialPath, metadataUrl: $metadataUrl, mutableMetadataUrl: $mutableMetadataUrl, plan: $plan[0], request: $request[0], target: $target}' \
+              > "$input"
+            pnpm exec tools-release workflow attest-public-target --input "$input"
+          done < <(jq -r '.[]' <<< '${{ inputs.attest_targets }}')
       - name: Issue stable qualification for accepted prerelease
         if: ${{ inputs.exact_name == 'prerelease' }}
         env:

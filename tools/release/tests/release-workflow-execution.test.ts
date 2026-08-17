@@ -27,23 +27,28 @@ const request = {
 } as const;
 
 function node(target: string, decision: "execute" | "replay") {
+  const releaseTarget = target === "darwin-arm64" ? "mac_arm64" : target === "darwin-x64" ? "mac_x64" : "win_x64";
   return {
     decision,
     definitionDigest: `sha256:${"2".repeat(64)}`,
     dependencies: [],
-    effect: "pure",
+    effect: "proof",
     executionDigest: `sha256:${"3".repeat(64)}`,
     executorIds: ["executor"],
     gate: "always",
     identityDigests: {},
-    inputs: { audit: {}, materialization: {}, operational: {}, semantic: { target } },
+    inputs: { audit: {}, materialization: {}, operational: {}, semantic: {
+      releaseTarget,
+      scenario: releaseTarget === "win_x64" ? "win-shell-lifecycle" : "mac-shell-lifecycle",
+      target,
+    } },
     nodeId: `node-${target}`,
     outputs: [{ role: "output", schemaVersion: 1 }],
-    path: "atom.build.shell",
+    path: "proof.installed.scenario",
     reason: decision === "execute" ? "receipt-miss" : "receipt-hit",
     ...(decision === "replay" ? { receipt: {
       definitionDigest: `sha256:${"2".repeat(64)}`,
-      effect: "pure",
+      effect: "proof",
       executionDigest: `sha256:${"3".repeat(64)}`,
       nodeId: `node-${target}`,
       outputs: [{ digest: `sha256:${"4".repeat(64)}`, role: "output", schemaVersion: 1 }],
@@ -69,6 +74,10 @@ describe("release workflow execution", () => {
       workflowDigest: request.workflowDigest,
     };
     expect(compileReleaseWorkflowExecution(plan, request)).toEqual({
+      acceptanceMatrix: { include: [
+        { artifact_dir: "dmg", os: "mac", runner: "macos-15-intel", target: "mac_x64" },
+      ] },
+      attestTargets: ["mac_arm64", "win_x64"],
       buildMatrix: { include: [{ runner: "macos-15-intel", target: "mac_x64" }] },
       executeTargets: ["mac_x64"],
       replayTargets: ["mac_arm64", "win_x64"],

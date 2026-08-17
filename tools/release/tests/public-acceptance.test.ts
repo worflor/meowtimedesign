@@ -8,6 +8,7 @@ import {
   createClosureDistributionManifest,
 } from "@open-design/closure/protocol";
 import { CLOSURE_BINDING_SCHEMA_VERSION } from "@open-design/closure/store";
+import { canonicalMetadataJson, metadataDigest } from "@open-design/metatool";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { compareCountedReleaseVersions, sha256Digest } from "../src/storage/latest-publication.js";
@@ -16,6 +17,7 @@ import {
   preparePublicWindowsAcceptance,
   publicAcceptanceInternals,
 } from "../src/storage/public-acceptance.js";
+import { attestWorkflowPublicTarget } from "../src/workflow/public-attestation.ts";
 
 const publicOrigin = "https://releases.example";
 const releaseVersion = "0.19.0-beta.27";
@@ -111,15 +113,19 @@ function fixture() {
     [metadataUrl, metadataBytes],
     [platformUrl, platformBytes],
     [installerUrl, installerBytes],
+    ...Object.values(closure.blobs).map((artifact) => [artifact.url, Buffer.alloc(artifact.size)] as const),
   ]);
-  const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+  const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
     const bytes = responses.get(String(input));
-    return bytes == null ? new Response(null, { status: 404 }) : new Response(Uint8Array.from(bytes));
+    if (bytes == null) return new Response(null, { status: 404 });
+    if (init?.method === "HEAD") return new Response(null, { headers: { "content-length": String(bytes.byteLength) } });
+    return new Response(Uint8Array.from(bytes));
   });
-  return { closure, fetchImpl, installerBytes, metadataUrl };
+  return { closure, fetchImpl, installerBytes, metadataUrl, platformUrl };
 }
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await Promise.all(temporaryRoots.splice(0).map(async (root) => await rm(root, { force: true, recursive: true })));
 });
 
@@ -327,5 +333,99 @@ describe("public Windows release acceptance", () => {
       .toBe("Open Design-release-beta-x64.dmg");
     expect(publicAcceptanceInternals.toolsPackArtifactName("win_x64", "release-beta-win"))
       .toBe("Open Design-release-beta-win-setup.exe");
+  });
+
+  it("combines a canonical lifecycle receipt with a fresh public projection attestation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "od-workflow-public-attestation-"));
+    temporaryRoots.push(root);
+    const source = fixture();
+    vi.stubGlobal("fetch", source.fetchImpl);
+    const d = (character: string) => `sha256:${character.repeat(64)}` as const;
+    const request = {
+      formatVersion: 1 as const,
+      provenance: { actor: "actor", event: "workflow_dispatch", repository: "nexu-io/open-design", runAttempt: 1, runId: "1", workflow: "release-beta" },
+      release: {
+        activate: true,
+        channel: "beta",
+        commit,
+        minShellVersion: releaseVersion,
+        namespace: "release-beta",
+        nodeVersion: "24.18.0",
+        packageManager: "pnpm@10.33.2",
+        profile: "test",
+        publicOrigin,
+        publish: true,
+        releaseVersion,
+      },
+      targets: [{ buildTarget: "all", name: "win_x64", namespace, nodeModulesAbi: "137", nodeNapi: "10", platform: "win32-x64", signMode: "unsigned", smokeMatrix: "win-shell-v2", standaloneProtocolVersion: 1 }],
+      workflowDigest: d("1"),
+    };
+    const receipt = {
+      definitionDigest: d("2"),
+      effect: "proof" as const,
+      executionDigest: d("3"),
+      nodeId: "win-lifecycle",
+      outputs: [{
+        digest: d("4"),
+        mediaType: "application/json",
+        role: "proof",
+        schemaVersion: 1,
+        value: {
+          evidence: {
+            coldStart: {
+              schemaVersion: 1,
+              status: "success",
+              timing: { launchDurationMs: 100, readinessBudgetMs: 300_000, readinessDurationMs: 200, totalDurationMs: 300 },
+            },
+            timing: { status: "success", step: "win-shell-lifecycle" },
+          },
+          scenario: "win-shell-lifecycle",
+        },
+      }],
+      provenance: {},
+      recordedAt: "2026-08-16T00:00:00.000Z",
+      schemaVersion: 1 as const,
+      semanticDigest: d("5"),
+      status: "success" as const,
+    };
+    const plan = {
+      formatVersion: 1 as const,
+      generatedAt: "2026-08-17T00:00:00.000Z",
+      nodes: [{
+        decision: "replay" as const,
+        definitionDigest: receipt.definitionDigest,
+        dependencies: [],
+        effect: "proof" as const,
+        executionDigest: receipt.executionDigest,
+        executorIds: ["windows"],
+        gate: "always" as const,
+        identityDigests: {},
+        inputs: { audit: {}, materialization: {}, operational: {}, semantic: { releaseTarget: "win_x64", scenario: "win-shell-lifecycle" } },
+        nodeId: receipt.nodeId,
+        outputs: [{ mediaType: "application/json", role: "proof", schemaVersion: 1 }],
+        path: "proof.installed.scenario" as const,
+        reason: "receipt-hit" as const,
+        receipt,
+        semanticDigest: receipt.semanticDigest,
+      }],
+      policy: { activate: true, counted: true, path: "policy.channel.exact" as const, publish: true },
+      requestDigest: metadataDigest(canonicalMetadataJson(request)),
+      schemaVersion: 1 as const,
+      workflowDigest: request.workflowDigest,
+    };
+    const credential = await attestWorkflowPublicTarget({
+      credentialPath: join(root, "credential.json"),
+      metadataUrl: source.metadataUrl,
+      mutableMetadataUrl: source.metadataUrl,
+      plan,
+      request,
+      target: "win_x64",
+    });
+    expect(credential).toMatchObject({
+      schemaVersion: 4,
+      target: "win_x64",
+      workflowProof: { checkedObjects: 4, mode: "canonical-receipt-and-public-projection", nodeId: "win-lifecycle" },
+    });
+    expect(publicAcceptanceInternals.parseCredential(credential)).toEqual(credential);
   });
 });

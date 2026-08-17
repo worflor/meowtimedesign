@@ -17,10 +17,12 @@ cli
       createReleaseWorkflowReceiptResolver,
       createReleaseWorkflowRequestFromEnv,
       candidateTargetProjectionInputSchema,
+      attestWorkflowPublicTarget,
       compileReleaseWorkflowExecution,
       declareDesktopReleaseWorkflow,
       materializeReplayTarget,
       planReleaseWorkflow,
+      publicAttestationInputSchema,
       projectCandidateTargetFromShellReceipt,
       registerScenarioReceipts,
       registerReleaseWorkflowReceipt,
@@ -61,6 +63,14 @@ cli
       const input = releaseWorkflowExecutionInputSchema.parse(JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown);
       const execution = compileReleaseWorkflowExecution(input.plan, input.request);
       const body = `${JSON.stringify(execution, null, 2)}\n`;
+      if (options.output == null) process.stdout.write(body);
+      else writeFileSync(resolve(options.output), body, "utf8");
+      return;
+    }
+    if (action === "attest-public-target") {
+      const input = publicAttestationInputSchema.parse(JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown);
+      const credential = await attestWorkflowPublicTarget(input);
+      const body = `${JSON.stringify(credential, null, 2)}\n`;
       if (options.output == null) process.stdout.write(body);
       else writeFileSync(resolve(options.output), body, "utf8");
       return;

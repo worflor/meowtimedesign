@@ -14,6 +14,7 @@ export {
 export { createReleaseWorkflowRequestFromEnv } from "./request.ts";
 export { registerScenarioReceipts, scenarioReceiptRegistrationInputSchema } from "./scenario-receipts.ts";
 export { planReleaseWorkflow, type ReleaseWorkflowPlannerDependencies } from "./planner.ts";
+export { attestWorkflowPublicTarget, publicAttestationInputSchema } from "./public-attestation.ts";
 export {
   createReleaseWorkflowReceiptResolver,
   registerReleaseWorkflowReceipt,
