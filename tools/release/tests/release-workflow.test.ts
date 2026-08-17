@@ -113,7 +113,9 @@ describe("ReleaseWorkflow", () => {
     expect(Object.keys(workflow.atom.build)).toEqual(["closureShared", "closureTarget", "shell"]);
     expect(releaseWorkflowManifestSchema.parse(sealed.manifest)).toEqual(sealed.manifest);
     expect(sealed.digest).toMatch(/^sha256:[0-9a-f]{64}$/u);
-    expect(sealed.manifest.definitions.find(({ path }) => path === "atom.build.shell")?.config.effect).toBe("pure");
+    const shell = sealed.manifest.definitions.find(({ path }) => path === "atom.build.shell");
+    if (shell?.path !== "atom.build.shell") throw new Error("fixture shell declaration is missing");
+    expect(shell.config.effect).toBe("pure");
   });
 
   it("canonicalizes declaration and set-like field order", () => {
@@ -203,5 +205,71 @@ describe("ReleaseWorkflow", () => {
       proofScope: "channel-namespace",
       schemaVersion: 1,
     })).toThrow(/must not be counted/u);
+  });
+
+  it("allows dependency-derived transactional atoms without inventing a source identity", () => {
+    const workflow = createReleaseWorkflow({ id: "fixture", identities, schemaVersion: 1 });
+    const control = workflow.executor.control({ capabilities: ["control"], id: "control", runnerClass: "ubuntu", schemaVersion: 1 });
+    const reserve = workflow.atom.transact.reserve({
+      confidence: "certain",
+      executor: control,
+      id: "reserve",
+      inputs: { operational: ["actor"], semantic: ["channel", "namespace"] },
+      outputs: [{ role: "reservation", schemaVersion: 1 }],
+      schemaVersion: 1,
+      witness: "release-workflow.reserve",
+    });
+    const exact = workflow.policy.channel.exact({
+      counted: true,
+      defaultActivate: true,
+      defaultPublish: true,
+      id: "exact",
+      proofScope: "channel-namespace",
+      schemaVersion: 1,
+    });
+    const prerelease = workflow.policy.channel.prerelease({
+      counted: true,
+      defaultActivate: true,
+      defaultPublish: true,
+      id: "prerelease",
+      proofScope: "channel-namespace",
+      schemaVersion: 1,
+    });
+    const stable = workflow.policy.channel.stable({
+      counted: false,
+      defaultActivate: false,
+      defaultPublish: false,
+      id: "stable",
+      proofScope: "channel-namespace",
+      schemaVersion: 1,
+    });
+    workflow.release.desktop({
+      atoms: [reserve],
+      executors: [control],
+      id: "desktop",
+      policies: [exact, prerelease, stable],
+      proofs: [],
+      schemaVersion: 1,
+      targets: ["mac_arm64"],
+    });
+    const sealed = workflow.seal();
+    const definition = sealed.manifest.definitions.find(({ path }) => path === "atom.transact.reserve");
+    expect(definition?.config).not.toHaveProperty("identity");
+    expect(releaseWorkflowManifestSchema.parse(sealed.manifest)).toEqual(sealed.manifest);
+  });
+
+  it("rejects tampered reference indexes and definitions outside the release graph", () => {
+    type MutableManifest = { definitions: Array<{ config: Record<string, unknown>; id: string; path: string }> };
+    const manifest = structuredClone(declareFixture().sealed.manifest) as unknown as MutableManifest;
+    const shell = manifest.definitions.find(({ path }) => path === "atom.build.shell")!;
+    shell.config.references = [];
+    expect(() => releaseWorkflowManifestSchema.parse(manifest)).toThrow(/references must exactly index/u);
+
+    const orphaned = structuredClone(declareFixture().sealed.manifest) as unknown as MutableManifest;
+    const control = orphaned.definitions.find(({ path }) => path === "executor.control")!;
+    const desktop = orphaned.definitions.find(({ path }) => path === "release.desktop")!;
+    desktop.config.executors = (desktop.config.executors as Array<{ $ref: string }>).filter(({ $ref }) => $ref !== control.id);
+    desktop.config.references = (desktop.config.references as string[]).filter((reference) => reference !== control.id);
+    expect(() => releaseWorkflowManifestSchema.parse(orphaned)).toThrow(/outside the release graph/u);
   });
 });

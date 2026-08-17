@@ -14,7 +14,6 @@ import type {
   ReleaseWorkflowIdentityBinding,
   ReleaseWorkflowInputClasses,
   ReleaseWorkflowManifest,
-  ReleaseWorkflowManifestDefinition,
   ReleaseWorkflowOutputDeclaration,
   ReleaseWorkflowProofDeclaration,
   ReleaseWorkflowReference,
@@ -39,6 +38,12 @@ type RuntimeReference = ReleaseWorkflowReference & Readonly<{
 }>;
 
 type JsonObject = Record<string, unknown>;
+type EncodedDefinition = Readonly<{
+  config: JsonObject;
+  id: string;
+  path: ReleaseWorkflowDefinitionPath;
+  schemaVersion: number;
+}>;
 
 const atomEffects = {
   "atom.attest.publication": "immutable-write",
@@ -53,7 +58,7 @@ const atomEffects = {
 } as const;
 
 function validateIdentity(
-  binding: ReleaseWorkflowAtomDeclaration["identity"] | ReleaseWorkflowProofDeclaration["identity"],
+  binding: NonNullable<ReleaseWorkflowAtomDeclaration["identity"]> | ReleaseWorkflowProofDeclaration["identity"],
   inputs: ReleaseWorkflowInputClasses,
   identities: ReleaseWorkflowFactoryOptions["identities"],
   label: string,
@@ -103,7 +108,7 @@ function deepFreeze<Value>(value: Value): Value {
 
 export function createReleaseWorkflow(options: ReleaseWorkflowFactoryOptions): ReleaseWorkflow {
   releaseWorkflowFactoryOptionsSchema.parse(options);
-  const definitions = new Map<string, ReleaseWorkflowManifestDefinition>();
+  const definitions = new Map<string, EncodedDefinition>();
   const localIds = new Set<string>();
   const token = Symbol(options.id);
   let sealed = false;
@@ -158,7 +163,7 @@ export function createReleaseWorkflow(options: ReleaseWorkflowFactoryOptions): R
       id: canonicalId,
       path,
       schemaVersion: input.schemaVersion,
-    } satisfies ReleaseWorkflowManifestDefinition);
+    } satisfies EncodedDefinition);
     definitions.set(canonicalId, definition);
     localIds.add(input.id);
     const reference = { id: canonicalId, path } as RuntimeReference;
@@ -169,12 +174,12 @@ export function createReleaseWorkflow(options: ReleaseWorkflowFactoryOptions): R
   function atom<Path extends keyof typeof atomEffects>(path: Path, input: ReleaseWorkflowAtomDeclaration): ReleaseWorkflowReference<Path> {
     const label = `${path}.${input.id}`;
     releaseWorkflowAtomDeclarationSchema.parse(input);
-    validateIdentity(input.identity, input.inputs, options.identities, label);
+    if (input.identity != null) validateIdentity(input.identity, input.inputs, options.identities, label);
     return register(path, {
       ...input,
       dependsOn: normalizedReferences(input.dependsOn ?? []),
       executor: normalizedReferences(Array.isArray(input.executor) ? input.executor : [input.executor]),
-      identity: normalizedIdentity(input.identity),
+      ...(input.identity == null ? {} : { identity: normalizedIdentity(input.identity) }),
       inputs: normalizedInputs(input.inputs),
       outputs: normalizedOutputs(input.outputs),
     } as unknown as ReleaseWorkflowAtomDeclaration & Record<string, unknown>, { effect: atomEffects[path] });
@@ -242,12 +247,11 @@ export function createReleaseWorkflow(options: ReleaseWorkflowFactoryOptions): R
     const releases = [...definitions.values()].filter(({ path }) => path === "release.desktop");
     if (releases.length !== 1) throw new Error(`release workflow ${options.id} must declare exactly one release.desktop`);
     sealed = true;
-    const manifest = deepFreeze({
+    const manifest = deepFreeze(releaseWorkflowManifestSchema.parse({
       definitions: [...definitions.values()].sort((left, right) => left.id.localeCompare(right.id)),
       formatVersion: 1,
       workflow: { id: options.id, schemaVersion: options.schemaVersion },
-    } satisfies ReleaseWorkflowManifest);
-    releaseWorkflowManifestSchema.parse(manifest);
+    })) satisfies ReleaseWorkflowManifest;
     const canonical = canonicalMetadataJson(manifest);
     return deepFreeze({ canonical, digest: metadataDigest(canonical), manifest });
   }
