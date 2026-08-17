@@ -1,6 +1,5 @@
 #!/usr/bin/env -S node --experimental-strip-types
 
-import { createHash, createHmac } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
@@ -15,18 +14,15 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
-type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
-type Digest = `sha256:${string}`;
+import { command, commands, ensure, fail, Options, switchBy } from "./lib/control.ts";
+import { git, gitPathSetDigest, type GitHashPath } from "./lib/git.ts";
+import { canonicalize, canonicalJson, digest, DIGEST_PATTERN, type Digest, type Json } from "./lib/json.ts";
+import { createStore } from "./lib/storage.ts";
+
 type AtomKind = "action" | "job";
 type AtomMode = "normal" | "verify";
 
-type HashPath = Readonly<{
-  excludeDirectoryNames?: readonly string[];
-  excludePaths?: readonly string[];
-  normalizePackageVersion?: boolean;
-  normalizeTextLineEndings?: boolean;
-  path: string;
-}>;
+type HashPath = GitHashPath;
 
 type OutputDeclaration = Readonly<{
   mediaType: string;
@@ -50,11 +46,11 @@ type AtomDeclarationInput = Omit<AtomDeclaration, "hashPaths" | "id" | "kind"> &
 }>;
 
 type AtomHandle = Readonly<{
-  atom: Readonly<{ definitionDigest: Digest; id: string; kind: AtomKind; schemaVersion: number }>;
+  atom: Readonly<{ controlDigest: Digest; definitionDigest: Digest; id: string; kind: AtomKind; schemaVersion: number }>;
   dependencies: Readonly<Record<string, Digest>>;
   digest: Digest;
   extras: Readonly<Record<string, Digest>>;
-  formatVersion: 1;
+  formatVersion: 2;
   source: Readonly<{ digest: Digest; ref: string }>;
 }>;
 
@@ -87,20 +83,10 @@ type AtomPlan = Readonly<{
   receipt?: AtomReceipt;
 }>;
 
-type StorageConfig = Readonly<{
-  accessKeyId: string;
-  bucket: string;
-  endpointUrl: string;
-  prefix: string;
-  region: string;
-  secretAccessKey: string;
-  sessionToken?: string;
-}>;
-
-const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const ID_PATTERN = /^[a-z][a-z0-9.-]*$/u;
 const EXTRA_PATTERN = /^[A-Za-z][A-Za-z0-9]*$/u;
 const CONTROL_PATHS = [
+  ".github/scripts/lib",
   ".github/scripts/workflow.ts",
 ] as const;
 const DEFAULT_EXCLUDED_DIRECTORIES = [
@@ -115,83 +101,6 @@ const DEFAULT_EXCLUDED_DIRECTORIES = [
   "test",
   "tests",
 ] as const;
-
-type Ensure = Readonly<{
-  array(value: unknown, label: string): unknown[];
-  digest(value: unknown, label: string): Digest;
-  exactKeys(value: Record<string, unknown>, allowed: readonly string[], label: string): void;
-  integer(value: unknown, label: string): number;
-  never(message: string): never;
-  record(value: unknown, label: string): Record<string, unknown>;
-  that(condition: unknown, message: string): asserts condition;
-  text(value: unknown, label: string): string;
-}>;
-
-const ensure: Ensure = Object.freeze({
-  array(value: unknown, label: string): unknown[] {
-    if (!Array.isArray(value)) throw new Error(`${label} must be an array`);
-    return value;
-  },
-  digest(value: unknown, label: string): Digest {
-    if (typeof value !== "string" || !DIGEST_PATTERN.test(value)) throw new Error(`${label} must be a sha256 digest`);
-    return value as Digest;
-  },
-  exactKeys(value: Record<string, unknown>, allowed: readonly string[], label: string): void {
-    const unknown = Object.keys(value).filter((key) => !allowed.includes(key));
-    if (unknown.length > 0) throw new Error(`${label} contains unknown fields: ${unknown.join(", ")}`);
-  },
-  integer(value: unknown, label: string): number {
-    if (!Number.isSafeInteger(value) || Number(value) < 1) throw new Error(`${label} must be a positive integer`);
-    return Number(value);
-  },
-  never(message: string): never {
-    throw new Error(message);
-  },
-  record(value: unknown, label: string): Record<string, unknown> {
-    if (value == null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
-    return value as Record<string, unknown>;
-  },
-  that(condition: unknown, message: string): asserts condition {
-    if (!condition) throw new Error(message);
-  },
-  text(value: unknown, label: string): string {
-    if (typeof value !== "string" || value.length === 0) throw new Error(`${label} must be a non-empty string`);
-    return value;
-  },
-});
-
-const fail = ensure.never;
-
-function switchBy<Key extends string, Result>(
-  key: Key,
-  branches: Readonly<Record<Key, () => Result>>,
-): Result {
-  const branch = branches[key];
-  ensure.that(branch != null, `unsupported switch value: ${key}`);
-  return branch();
-}
-
-function canonicalize(value: unknown): Json {
-  if (value === null) return null;
-  if (typeof value === "boolean" || typeof value === "string") return value;
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) fail("canonical JSON cannot contain non-finite numbers");
-    return value;
-  }
-  if (Array.isArray(value)) return value.map(canonicalize);
-  const object = ensure.record(value, "canonical JSON value");
-  return Object.fromEntries(Object.entries(object)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, entry]) => [key, canonicalize(entry)]));
-}
-
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(canonicalize(value));
-}
-
-function digest(value: string | Uint8Array): Digest {
-  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
-}
 
 function normalizeRepoPath(value: string, label: string): string {
   const normalized = value.replaceAll("\\", "/").replace(/^\.\//u, "").replace(/\/+$/u, "");
@@ -318,71 +227,18 @@ function createWorkflow(root: string) {
   });
 }
 
-function git(args: readonly string[], cwd: string): Buffer {
-  try {
-    return execFileSync("git", args, { cwd, encoding: "buffer", maxBuffer: 256 * 1024 * 1024 });
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    fail(`git ${args.join(" ")} failed: ${detail}`);
-  }
-}
-
-type GitEntry = Readonly<{ mode: string; object: string; path: string; type: string }>;
-
-function listGitEntries(root: string, ref: string, source: HashPath): readonly GitEntry[] {
-  const raw = git(["ls-tree", "-rz", "--full-tree", ref, "--", source.path], root);
-  const entries = raw.toString("utf8").split("\0").filter(Boolean).map((line): GitEntry => {
-    const tab = line.indexOf("\t");
-    if (tab < 0) fail(`invalid git ls-tree entry: ${line}`);
-    const [mode, type, object] = line.slice(0, tab).split(" ");
-    if (mode == null || type == null || object == null) fail(`invalid git ls-tree metadata: ${line}`);
-    return { mode, object, path: line.slice(tab + 1), type };
-  });
-  const excludedDirectories = new Set(source.excludeDirectoryNames ?? []);
-  const exclusions = (source.excludePaths ?? []).map((path) => `${source.path}/${path}`);
-  return entries.filter((entry) => {
-    const relativePath = entry.path === source.path ? "" : entry.path.slice(source.path.length + 1);
-    if (relativePath.split("/").some((segment) => excludedDirectories.has(segment))) return false;
-    return !exclusions.some((excluded) => entry.path === excluded || entry.path.startsWith(`${excluded}/`));
-  });
-}
-
-function normalizedBlob(root: string, entry: GitEntry, source: HashPath): Readonly<{ digest: Digest; size: number }> {
-  let body = git(["cat-file", "blob", entry.object], root);
-  if (source.normalizePackageVersion === true && entry.path.endsWith("/package.json") || source.normalizePackageVersion === true && entry.path === "package.json") {
-    try {
-      const packageJson = ensure.record(JSON.parse(body.toString("utf8")), `${entry.path} package metadata`);
-      delete packageJson.version;
-      body = Buffer.from(`${canonicalJson(packageJson)}\n`);
-    } catch {
-      // The owning validation reports malformed JSON; identity remains byte-exact.
-    }
-  }
-  if (source.normalizeTextLineEndings === true && !body.includes(0)) {
-    body = Buffer.from(body.toString("utf8").replace(/\r\n?/gu, "\n"));
-  }
-  return { digest: digest(body), size: body.byteLength };
-}
-
 function sourceDigest(root: string, ref: string, atom: AtomDeclaration): Digest {
-  const seen = new Set<string>();
-  const entries: Json[] = [];
-  for (const source of atom.hashPaths) {
-    const matched = listGitEntries(root, ref, source);
-    if (matched.length === 0) fail(`${atom.id} hash path does not exist at ${ref}: ${source.path}`);
-    for (const entry of matched) {
-      if (seen.has(entry.path)) fail(`${atom.id} hash paths overlap at ${entry.path}`);
-      seen.add(entry.path);
-      if (entry.type === "blob") {
-        const normalized = normalizedBlob(root, entry, source);
-        entries.push({ kind: entry.mode === "120000" ? "symlink" : "file", mode: entry.mode, path: entry.path, ...normalized });
-      } else {
-        entries.push({ kind: entry.type, mode: entry.mode, object: entry.object, path: entry.path });
-      }
-    }
-  }
-  entries.sort((left, right) => String((left as Record<string, Json>).path).localeCompare(String((right as Record<string, Json>).path)));
-  return digest(canonicalJson({ domain: "open-design/workflow-source/v1", entries }));
+  return gitPathSetDigest(root, ref, atom.hashPaths, {
+    domain: "open-design/workflow-source/v2",
+    label: `${atom.id} hash`,
+  });
+}
+
+function controlDigest(root: string, ref: string, atom: AtomDeclaration): Digest {
+  return gitPathSetDigest(root, ref, atom.controlPaths.map((path) => ({ excludeDirectoryNames: [], path })), {
+    domain: "open-design/workflow-control/v2",
+    label: `${atom.id} control`,
+  });
 }
 
 function definitionDigest(atom: AtomDeclaration): Digest {
@@ -403,6 +259,15 @@ function resolveExtras(atom: AtomDeclaration, input: unknown): Readonly<Record<s
   })));
 }
 
+function extrasFromEnv(atom: AtomDeclaration, prefix: string): Record<string, string> {
+  ensure.that(/^[A-Z][A-Z0-9_]*_$/u.test(prefix), "--extras-env-prefix must be an uppercase environment prefix ending in _");
+  return Object.fromEntries(atom.extraDigests.map((name) => {
+    const suffix = name.replace(/([a-z0-9])([A-Z])/gu, "$1_$2").toUpperCase();
+    const envName = `${prefix}${suffix}`;
+    return [name, process.env[envName] ?? ensure.never(`${envName} is required by ${atom.id}`)];
+  }));
+}
+
 function createHandle(options: Readonly<{
   atom: AtomDeclaration;
   dependencyHandles: Readonly<Record<string, Digest>>;
@@ -420,6 +285,7 @@ function createHandle(options: Readonly<{
   const ref = git(["rev-parse", "--verify", `${options.ref}^{commit}`], options.root).toString("utf8").trim();
   const partial = {
     atom: {
+      controlDigest: controlDigest(options.root, ref, options.atom),
       definitionDigest: definitionDigest(options.atom),
       id: options.atom.id,
       kind: options.atom.kind,
@@ -427,10 +293,10 @@ function createHandle(options: Readonly<{
     },
     dependencies,
     extras,
-    formatVersion: 1 as const,
+    formatVersion: 2 as const,
     source: { digest: sourceDigest(options.root, ref, options.atom), ref },
   };
-  return Object.freeze({ ...partial, digest: digest(canonicalJson({ domain: "open-design/workflow-handle/v1", ...partial })) });
+  return Object.freeze({ ...partial, digest: digest(canonicalJson({ domain: "open-design/workflow-handle/v2", ...partial })) });
 }
 
 function validateHandle(value: unknown, expected?: AtomHandle): AtomHandle {
@@ -439,6 +305,7 @@ function validateHandle(value: unknown, expected?: AtomHandle): AtomHandle {
   const source = ensure.record(input.source, "atom handle.source");
   const handle: AtomHandle = {
     atom: {
+      controlDigest: ensure.digest(atom.controlDigest, "atom handle controlDigest"),
       definitionDigest: ensure.digest(atom.definitionDigest, "atom handle definitionDigest"),
       id: String(atom.id),
       kind: atom.kind === "job" ? "job" : atom.kind === "action" ? "action" : fail("atom handle kind is invalid"),
@@ -447,21 +314,21 @@ function validateHandle(value: unknown, expected?: AtomHandle): AtomHandle {
     dependencies: Object.fromEntries(Object.entries(ensure.record(input.dependencies, "atom handle.dependencies")).map(([key, entry]) => [key, ensure.digest(entry, `dependency ${key}`)])),
     digest: ensure.digest(input.digest, "atom handle.digest"),
     extras: Object.fromEntries(Object.entries(ensure.record(input.extras, "atom handle.extras")).map(([key, entry]) => [key, ensure.digest(entry, `extra ${key}`)])),
-    formatVersion: input.formatVersion === 1 ? 1 : fail("atom handle formatVersion is invalid"),
+    formatVersion: input.formatVersion === 2 ? 2 : fail("atom handle formatVersion is invalid"),
     source: { digest: ensure.digest(source.digest, "atom handle source digest"), ref: String(source.ref) },
   };
   const { digest: _digest, ...unsigned } = handle;
-  if (handle.digest !== digest(canonicalJson({ domain: "open-design/workflow-handle/v1", ...unsigned }))) fail("atom handle digest is invalid");
+  if (handle.digest !== digest(canonicalJson({ domain: "open-design/workflow-handle/v2", ...unsigned }))) fail("atom handle digest is invalid");
   if (expected != null && canonicalJson(handle) !== canonicalJson(expected)) fail("atom handle does not match the sealed plan");
   return Object.freeze(handle);
 }
 
 function receiptObjectKey(prefix: string, handle: AtomHandle): string {
-  return `${prefix.replace(/^\/+|\/+$/gu, "")}/receipts/v1/${handle.atom.kind}/${handle.digest.slice("sha256:".length)}.json`;
+  return `${prefix.replace(/^\/+|\/+$/gu, "")}/receipts/v2/${handle.atom.kind}/${handle.digest.slice("sha256:".length)}.json`;
 }
 
 function quarantineObjectKey(prefix: string, handle: AtomHandle): string {
-  return `${prefix.replace(/^\/+|\/+$/gu, "")}/quarantine/v1/${handle.digest.slice("sha256:".length)}.json`;
+  return `${prefix.replace(/^\/+|\/+$/gu, "")}/quarantine/v2/${handle.digest.slice("sha256:".length)}.json`;
 }
 
 function parseReceipt(value: unknown, expected: AtomHandle, declaration: AtomDeclaration): AtomReceipt {
@@ -497,169 +364,12 @@ function parseReceipt(value: unknown, expected: AtomHandle, declaration: AtomDec
   });
 }
 
-function storageFromEnv(prefixOverride?: string): StorageConfig | null {
-  const required = [
-    "RELEASE_STORAGE_ACCESS_KEY_ID", "RELEASE_STORAGE_BUCKET", "RELEASE_STORAGE_ENDPOINT",
-    "RELEASE_STORAGE_SECRET_ACCESS_KEY",
-  ] as const;
-  if (required.every((name) => process.env[name] == null || process.env[name] === "")) return null;
-  for (const name of required) if (!process.env[name]) fail(`${name} is required for workflow receipt storage`);
-  return {
-    accessKeyId: process.env.RELEASE_STORAGE_ACCESS_KEY_ID!,
-    bucket: process.env.RELEASE_STORAGE_BUCKET!,
-    endpointUrl: process.env.RELEASE_STORAGE_ENDPOINT!,
-    prefix: prefixOverride ?? process.env.WORKFLOW_RECEIPT_PREFIX ?? "workflow",
-    region: process.env.RELEASE_STORAGE_REGION || "auto",
-    secretAccessKey: process.env.RELEASE_STORAGE_SECRET_ACCESS_KEY!,
-    ...(process.env.RELEASE_STORAGE_SESSION_TOKEN ? { sessionToken: process.env.RELEASE_STORAGE_SESSION_TOKEN } : {}),
-  };
-}
-
-function hmac(key: Buffer | string, value: string): Buffer {
-  return createHmac("sha256", key).update(value, "utf8").digest();
-}
-
-function hashHex(value: Buffer | string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function encodePathSegment(value: string): string {
-  return encodeURIComponent(value).replace(/[!'()*]/gu, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
-}
-
-function storageObjectUrl(config: StorageConfig, key: string): Readonly<{ canonicalUri: string; url: URL }> {
-  const endpoint = new URL(config.endpointUrl.replace(/\/+$/u, ""));
-  const endpointPath = endpoint.pathname === "/" ? "" : endpoint.pathname.replace(/\/+$/u, "");
-  const objectPath = [config.bucket, ...key.split("/")].map(encodePathSegment).join("/");
-  const canonicalUri = `${endpointPath}/${objectPath}`;
-  const url = new URL(endpoint.toString());
-  url.pathname = canonicalUri;
-  return { canonicalUri, url };
-}
-
-async function signedStorageRequest(config: StorageConfig, method: "GET" | "PUT", key: string, body?: Buffer, immutable = false): Promise<Response> {
-  const payloadHash = hashHex(body ?? "");
-  const { canonicalUri, url } = storageObjectUrl(config, key);
-  const now = new Date().toISOString().replace(/[:-]|\.\d{3}/gu, "");
-  const dateStamp = now.slice(0, 8);
-  const headers: Record<string, string> = {
-    host: url.host,
-    "x-amz-content-sha256": payloadHash,
-    "x-amz-date": now,
-    ...(method === "PUT" ? { "cache-control": "public, max-age=31536000, immutable", "content-type": "application/json; charset=utf-8" } : {}),
-    ...(immutable ? { "if-none-match": "*" } : {}),
-    ...(config.sessionToken ? { "x-amz-security-token": config.sessionToken } : {}),
-  };
-  const signedHeaderNames = Object.keys(headers).sort();
-  const canonicalHeaders = signedHeaderNames.map((name) => `${name}:${headers[name]}\n`).join("");
-  const canonicalRequest = [method, canonicalUri, "", canonicalHeaders, signedHeaderNames.join(";"), payloadHash].join("\n");
-  const scope = `${dateStamp}/${config.region}/s3/aws4_request`;
-  const stringToSign = ["AWS4-HMAC-SHA256", now, scope, hashHex(canonicalRequest)].join("\n");
-  const signingKey = hmac(hmac(hmac(hmac(`AWS4${config.secretAccessKey}`, dateStamp), config.region), "s3"), "aws4_request");
-  const signature = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
-  headers.authorization = `AWS4-HMAC-SHA256 Credential=${config.accessKeyId}/${scope}, SignedHeaders=${signedHeaderNames.join(";")}, Signature=${signature}`;
-  return await fetch(url, { body: body?.toString("utf8"), headers, method });
-}
-
-type Store = Readonly<{
-  get(key: string): Promise<string | null>;
-  putIfAbsent(key: string, value: string): Promise<Readonly<{ existing?: string; status: "created" | "exists" }>>;
-}>;
-
-function createStore(options: Readonly<{ directory?: string; prefix?: string }>): Store {
-  if (options.directory != null) {
-    const directory = resolve(options.directory);
-    return {
-      async get(key) {
-        const path = join(directory, key);
-        return existsSync(path) ? readFileSync(path, "utf8") : null;
-      },
-      async putIfAbsent(key, value) {
-        const path = join(directory, key);
-        if (existsSync(path)) {
-          return { existing: readFileSync(path, "utf8"), status: "exists" };
-        }
-        mkdirSync(dirname(path), { recursive: true });
-        writeFileSync(path, value, { flag: "wx" });
-        return { status: "created" };
-      },
-    };
-  }
-  const config = storageFromEnv(options.prefix);
-  if (config == null) fail("workflow receipt storage is not configured; pass --store-dir or RELEASE_STORAGE_* variables");
-  return {
-    async get(key) {
-      const response = await signedStorageRequest(config, "GET", key);
-      if (response.status === 404) return null;
-      const text = await response.text();
-      if (!response.ok) fail(`GET workflow receipt failed with HTTP ${response.status}: ${text}`);
-      return text;
-    },
-    async putIfAbsent(key, value) {
-      const response = await signedStorageRequest(config, "PUT", key, Buffer.from(value), true);
-      const text = await response.text();
-      if (response.ok) return { status: "created" };
-      if (response.status !== 412) fail(`PUT workflow receipt failed with HTTP ${response.status}: ${text}`);
-      const existing = await this.get(key);
-      if (existing == null) fail(`workflow receipt disappeared after immutable conflict: ${key}`);
-      return { existing, status: "exists" };
-    },
-  };
-}
-
 function parseJsonFile(path: string, label: string): unknown {
   try {
     return JSON.parse(readFileSync(resolve(path), "utf8")) as unknown;
   } catch (error) {
     fail(`${label} is invalid: ${error instanceof Error ? error.message : String(error)}`);
   }
-}
-
-class Options {
-  readonly #values: ReadonlyMap<string, string>;
-
-  constructor(values: Readonly<Record<string, string>>) {
-    this.#values = new Map(Object.entries(values));
-  }
-
-  get(name: string): string {
-    return this.#values.get(name) ?? ensure.never(`--${name} is required`);
-  }
-
-  optional(name: string): string | undefined {
-    return this.#values.get(name);
-  }
-}
-
-type Command = Readonly<{
-  options: readonly string[];
-  run: (args: Options) => Promise<void> | void;
-}>;
-
-function command(options: readonly string[], run: Command["run"]): Command {
-  return Object.freeze({ options: uniqueSorted(options, "command options"), run });
-}
-
-function commands<const Table extends Readonly<Record<string, Command>>>(table: Table) {
-  return Object.freeze({
-    async run(argv: readonly string[]): Promise<void> {
-      const [name, ...args] = argv;
-      ensure.that(name != null && Object.hasOwn(table, name), `unknown workflow command: ${name ?? ""}\n${usage()}`);
-      const selected = table[name as keyof Table]!;
-      ensure.that(args.length % 2 === 0, `${name} options must be --name value pairs`);
-      const values: Record<string, string> = {};
-      for (let index = 0; index < args.length; index += 2) {
-        const rawKey = args[index]!;
-        const key = rawKey.replace(/^--/u, "");
-        ensure.that(rawKey === `--${key}` && selected.options.includes(key), `${name} does not support ${rawKey}`);
-        ensure.that(values[key] == null, `${name} received duplicate option ${rawKey}`);
-        const value = args[index + 1];
-        ensure.that(value != null && !value.startsWith("--"), `${rawKey} requires a value`);
-        values[key] = value;
-      }
-      await selected.run(new Options(values));
-    },
-  });
 }
 
 function parseDependencies(path: string | undefined): Readonly<Record<string, Digest>> {
@@ -685,14 +395,17 @@ async function resolvePlan(args: Options): Promise<void> {
   const modeValue: AtomMode = rawMode === "normal" || rawMode === "verify"
     ? rawMode
     : ensure.never("--mode must be normal or verify");
+  const extrasPath = args.optional("extras");
+  const extrasEnvPrefix = args.optional("extras-env-prefix");
+  ensure.that((extrasPath == null) !== (extrasEnvPrefix == null), "pass exactly one of --extras or --extras-env-prefix");
   const handle = createHandle({
     atom,
     dependencyHandles: parseDependencies(args.optional("dependencies")),
-    extras: parseJsonFile(args.get("extras"), "extra digests"),
+    extras: extrasPath == null ? extrasFromEnv(atom, extrasEnvPrefix!) : parseJsonFile(extrasPath, "extra digests"),
     ref,
     root,
   });
-  const store = createStore({ directory: args.optional("store-dir"), prefix: args.optional("prefix") });
+  const store = createStore({ directory: args.optional("store-dir") });
   const prefix = args.optional("prefix") ?? process.env.WORKFLOW_RECEIPT_PREFIX ?? "workflow";
   const quarantined = await store.get(quarantineObjectKey(prefix, handle));
   const receiptText = quarantined == null && modeValue === "normal" ? await store.get(receiptObjectKey(prefix, handle)) : null;
@@ -799,10 +512,10 @@ async function commitReceipt(args: Options): Promise<void> {
     recordedAt: new Date().toISOString(),
     status: "success",
   };
-  const store = createStore({ directory: args.optional("store-dir"), prefix: args.optional("prefix") });
+  const store = createStore({ directory: args.optional("store-dir") });
   const prefix = args.optional("prefix") ?? process.env.WORKFLOW_RECEIPT_PREFIX ?? "workflow";
   if (planInput.mode === "verify") {
-    const auditKey = `${prefix.replace(/^\/+|\/+$/gu, "")}/audits/v1/${handle.digest.slice("sha256:".length)}/${receipt.provenance.runId}-${receipt.provenance.runAttempt}.json`;
+    const auditKey = `${prefix.replace(/^\/+|\/+$/gu, "")}/audits/v2/${handle.digest.slice("sha256:".length)}/${receipt.provenance.runId}-${receipt.provenance.runAttempt}.json`;
     const audit = await store.putIfAbsent(auditKey, `${JSON.stringify(canonicalize(receipt), null, 2)}\n`);
     if (audit.existing != null && audit.existing !== `${JSON.stringify(canonicalize(receipt), null, 2)}\n`) {
       fail(`immutable workflow verification audit conflicts: ${auditKey}`);
@@ -818,7 +531,7 @@ async function commitReceipt(args: Options): Promise<void> {
       digest: outputDigest, mediaType, role, schemaVersion,
     }));
     if (canonicalJson(outputIdentity(existing)) !== canonicalJson(outputIdentity(receipt))) {
-      fail(`immutable workflow receipt output conflicts: ${handle.digest}`);
+      process.stdout.write(`::notice title=Workflow receipt CAS reused::${handle.atom.kind} ${handle.atom.id} already has canonical outputs for ${handle.digest}\n`);
     }
   }
   writeJson(args.optional("output"), { handleDigest: handle.digest, status: stored.status === "created" ? "created" : "reused" });
@@ -840,6 +553,122 @@ function replayPlan(args: Options): void {
   mkdirSync(outputRoot, { recursive: true });
   for (const output of receipt.outputs) {
     writeFileSync(join(outputRoot, `${output.role}.json`), `${JSON.stringify(canonicalize(output.value), null, 2)}\n`, { flag: "wx" });
+  }
+}
+
+function captureResult(args: Options): void {
+  const plan = ensure.record(parseJsonFile(args.get("plan"), "atom plan"), "atom plan");
+  ensure.that(plan.decision === "execute", "only an execute plan can capture outputs");
+  const handle = validateHandle(plan.handle);
+  const root = resolve(args.optional("root") ?? process.cwd());
+  const workflow = createWorkflow(root);
+  const atom = switchBy(handle.atom.kind, {
+    action: () => workflow.action(handle.atom.id),
+    job: () => workflow.job(handle.atom.id),
+  });
+  ensure.that(handle.atom.definitionDigest === definitionDigest(atom), "capture plan uses a non-authoritative atom definition");
+  const inputRoot = resolve(args.get("input-root"));
+  const outputs = Object.fromEntries(atom.outputs.map(({ role }) => [role, parseJsonFile(join(inputRoot, `${role}.json`), `atom output ${role}`)]));
+  writeJson(args.get("output"), { outputs });
+}
+
+function receiptRequests(root: string): Array<Readonly<{ plan: string; result: string }>> {
+  const requests: Array<Readonly<{ plan: string; result: string }>> = [];
+  const visit = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) visit(path);
+      else if (entry.isFile() && entry.name === "plan.json") {
+        const result = join(directory, "result.json");
+        if (existsSync(result)) requests.push({ plan: path, result });
+      }
+    }
+  };
+  if (existsSync(root)) visit(root);
+  return requests.sort((left, right) => left.plan.localeCompare(right.plan));
+}
+
+async function finalizeRun(args: Options): Promise<void> {
+  const repository = process.env.GITHUB_REPOSITORY ?? ensure.never("GITHUB_REPOSITORY is required");
+  const token = process.env.GITHUB_TOKEN ?? ensure.never("GITHUB_TOKEN is required");
+  const runId = args.get("run-id");
+  const response = await fetch(`https://api.github.com/repos/${repository}/actions/runs/${runId}/artifacts?per_page=100`, {
+    headers: { accept: "application/vnd.github+json", authorization: `Bearer ${token}`, "x-github-api-version": "2022-11-28" },
+  });
+  ensure.that(response.ok, `GitHub artifact discovery failed with HTTP ${response.status}`);
+  const payload = ensure.record(await response.json(), "GitHub artifacts response");
+  const artifacts = ensure.array(payload.artifacts, "GitHub artifacts").map((value, index) => {
+    const artifact = ensure.record(value, `GitHub artifact ${index}`);
+    return { expired: artifact.expired === true, id: String(artifact.id), name: String(artifact.name) };
+  }).filter(({ expired, name }) => !expired && name.startsWith("workflow-receipt-"));
+  if (artifacts.length === 0) return;
+
+  const temporary = mkdtempSync(join(tmpdir(), "open-design-workflow-finalize-"));
+  try {
+    for (const artifact of artifacts) {
+      const archive = await fetch(`https://api.github.com/repos/${repository}/actions/artifacts/${artifact.id}/zip`, {
+        headers: { accept: "application/vnd.github+json", authorization: `Bearer ${token}`, "x-github-api-version": "2022-11-28" },
+      });
+      ensure.that(archive.ok, `GitHub artifact ${artifact.name} download failed with HTTP ${archive.status}`);
+      const archivePath = join(temporary, `${artifact.id}.zip`);
+      const outputRoot = join(temporary, artifact.id);
+      writeFileSync(archivePath, Buffer.from(await archive.arrayBuffer()));
+      mkdirSync(outputRoot, { recursive: true });
+      const archiveEntries = execFileSync("unzip", ["-Z1", archivePath], { encoding: "utf8" })
+        .split("\n").filter(Boolean);
+      for (const entry of archiveEntries) {
+        const normalized = entry.replaceAll("\\", "/");
+        ensure.that(
+          !isAbsolute(entry) && normalized !== ".." && !normalized.startsWith("../") && !normalized.includes("/../"),
+          `GitHub artifact ${artifact.name} contains an unsafe path: ${entry}`,
+        );
+      }
+      execFileSync("unzip", ["-q", archivePath, "-d", outputRoot]);
+    }
+    const requests = receiptRequests(temporary);
+    ensure.that(requests.length === artifacts.length, `expected ${artifacts.length} receipt requests, found ${requests.length}`);
+    const root = resolve(args.optional("root") ?? process.cwd());
+    const trustedRef = args.get("trusted-ref");
+    const workflow = createWorkflow(root);
+    for (const [index, request] of requests.entries()) {
+      const plan = ensure.record(parseJsonFile(request.plan, "receipt request plan"), "receipt request plan");
+      const handle = validateHandle(plan.handle);
+      let trustedSource = true;
+      try {
+        execFileSync("git", ["merge-base", "--is-ancestor", handle.source.ref, trustedRef], { cwd: root, stdio: "ignore" });
+      } catch {
+        trustedSource = false;
+      }
+      if (!trustedSource) {
+        process.stdout.write(`::notice title=Workflow receipt not finalized::${handle.atom.kind} ${handle.atom.id} source is outside the trusted ref\n`);
+        continue;
+      }
+      const trustedKeys = handle.atom.kind === "action" ? workflow.actions() : workflow.jobs();
+      if (!trustedKeys.includes(handle.atom.id)) {
+        process.stdout.write(`::notice title=Workflow receipt not finalized::${handle.atom.kind} ${handle.atom.id} is not declared by the trusted control plane\n`);
+        continue;
+      }
+      const atom = switchBy(handle.atom.kind, {
+        action: () => workflow.action(handle.atom.id),
+        job: () => workflow.job(handle.atom.id),
+      });
+      const trustedControl = controlDigest(root, trustedRef, atom);
+      if (handle.atom.definitionDigest !== definitionDigest(atom) || handle.atom.controlDigest !== trustedControl) {
+        process.stdout.write(`::notice title=Workflow receipt not finalized::${handle.atom.kind} ${handle.atom.id} was produced outside the current trusted control plane\n`);
+        continue;
+      }
+      await commitReceipt(new Options({
+        output: join(temporary, `commit-${index}.json`),
+        plan: request.plan,
+        prefix: args.optional("prefix") ?? "workflow",
+        "require-ancestor-of": trustedRef,
+        result: request.result,
+        root,
+        "trusted-ref": trustedRef,
+      }));
+    }
+  } finally {
+    rmSync(temporary, { force: true, recursive: true });
   }
 }
 
@@ -876,8 +705,9 @@ async function selfCheck(): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "open-design-workflow-"));
   try {
     initRepo(root);
-    mkdirSync(join(root, ".github", "scripts"), { recursive: true });
+    mkdirSync(join(root, ".github", "scripts", "lib"), { recursive: true });
     writeFileSync(join(root, ".github", "scripts", "workflow.ts"), "controller-v1\n");
+    writeFileSync(join(root, ".github", "scripts", "lib", "control.ts"), "library-v1\n");
     writeFileSync(join(root, "source.txt"), "source-v1\r\n");
     writeFileSync(join(root, "package.json"), '{"name":"probe","version":"1.0.0"}\n');
     execFileSync("git", ["add", "."], { cwd: root });
@@ -963,9 +793,11 @@ async function selfCheck(): Promise<void> {
     const verify = ensure.record(parseJsonFile(verifyPath, "verify plan"), "verify plan");
     if (verify.decision !== "execute" || verify.reason !== "verify") fail("verify mode did not force execution");
 
-    writeFileSync(join(root, ".github", "scripts", "workflow.ts"), "controller-v2\n");
+    writeFileSync(join(root, ".github", "scripts", "lib", "control.ts"), "library-v2\n");
     execFileSync("git", ["add", "."], { cwd: root });
     execFileSync("git", ["commit", "-qm", "control change"], { cwd: root });
+    const controlChanged = createHandle({ atom: action, dependencyHandles: {}, extras: { runtime }, ref: "HEAD", root });
+    if (changed.digest === controlChanged.digest) fail("shared control library change did not invalidate the handle");
     rejected = false;
     try { validateControlPlane(root, action, "HEAD", "HEAD~1"); } catch { rejected = true; }
     if (!rejected) fail("changed control plane was allowed to mint a receipt");
@@ -978,10 +810,12 @@ async function selfCheck(): Promise<void> {
 function usage(): string {
   return `Usage:
   node --experimental-strip-types .github/scripts/workflow.ts self-check
+  node --experimental-strip-types .github/scripts/workflow.ts capture --plan <json> --input-root <path> --output <json> [--root <path>]
   node --experimental-strip-types .github/scripts/workflow.ts describe [--action <key> | --job <key>] [--root <path>] [--output <path>]
   node --experimental-strip-types .github/scripts/workflow.ts resolve (--action <key> | --job <key>) --extras <json> [--dependencies <json>] [--ref <git-ref>] [--root <path>] [--mode normal|verify] [--store-dir <path>] [--prefix <key>] [--github-output-prefix <name>] [--output <path>]
   node --experimental-strip-types .github/scripts/workflow.ts replay --plan <json> --output-root <path> [--root <path>]
   node --experimental-strip-types .github/scripts/workflow.ts commit --plan <json> --result <json> [--trusted-ref <git-ref>] [--require-ancestor-of <git-ref>] [--root <path>] [--store-dir <path>] [--prefix <key>] [--output <path>]
+  node --experimental-strip-types .github/scripts/workflow.ts finalize-run --run-id <id> --trusted-ref <git-ref> [--root <path>] [--prefix <key>]
 `;
 }
 
@@ -992,18 +826,20 @@ async function main(): Promise<void> {
     return;
   }
   await commands({
+    capture: command(["input-root", "output", "plan", "root"], captureResult),
     commit: command(
       ["output", "plan", "prefix", "require-ancestor-of", "result", "root", "store-dir", "trusted-ref"],
       commitReceipt,
     ),
     describe: command(["action", "job", "output", "root"], describe),
+    "finalize-run": command(["prefix", "root", "run-id", "trusted-ref"], finalizeRun),
     replay: command(["output-root", "plan", "root"], replayPlan),
     resolve: command(
-      ["action", "dependencies", "extras", "github-output-prefix", "job", "mode", "output", "prefix", "ref", "root", "store-dir"],
+      ["action", "dependencies", "extras", "extras-env-prefix", "github-output-prefix", "job", "mode", "output", "prefix", "ref", "root", "store-dir"],
       resolvePlan,
     ),
     "self-check": command([], selfCheck),
-  }).run(argv);
+  }, usage).run(argv);
 }
 
 main().catch((error: unknown) => {

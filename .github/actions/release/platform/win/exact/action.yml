@@ -42,9 +42,6 @@ inputs:
   smoke-mode:
     description: Windows smoke coverage
     required: true
-  proof-state:
-    description: Canonical scenario proof state
-    required: true
   build-target:
     description: tools-pack Windows build target
     required: true
@@ -53,9 +50,6 @@ inputs:
     required: true
   update-target-version:
     description: Optional external updater target version
-    required: true
-  workflow-plan-path:
-    description: Canonical workflow plan that exclusively owns release decisions and identities
     required: true
 
 outputs:
@@ -67,7 +61,7 @@ outputs:
     value: ${{ steps.candidate.outputs.candidate_primary_url }}
   smoke_result:
     description: Packaged smoke outcome
-    value: ${{ steps.win_x64_smoke.outcome }}
+    value: ${{ steps.smoke_plan.outputs.decision == 'replay' && 'success' || steps.win_x64_smoke.outcome }}
   win_x64_url:
     description: Published Windows installer URL
     value: ${{ steps.win_x64_platform_outputs.outputs.installer_url }}
@@ -130,8 +124,31 @@ runs:
         $identityOutput | Set-Content -Path $env:RELEASE_SHELL_PLAN_JSON_PATH -Encoding utf8
         pnpm.cmd exec tools-release resolve-shell-build
         if ($LASTEXITCODE -ne 0) { throw "immutable Windows Shell resolution failed with exit code $LASTEXITCODE" }
+    - name: Resolve win_x64 smoke atom
+      id: smoke_plan
+      if: ${{ inputs.smoke-mode != 'skip' }}
+      uses: ./.github/actions/workflow/action/resolve
+      env:
+        RELEASE_STORAGE_ACCESS_KEY_ID: ${{ env.CLOUDFLARE_R2_RELEASES_AK }}
+        RELEASE_STORAGE_BUCKET: ${{ env.CLOUDFLARE_R2_RELEASES_BUCKET }}
+        RELEASE_STORAGE_ENDPOINT: ${{ env.CLOUDFLARE_R2_RELEASES_URL }}
+        RELEASE_STORAGE_REGION: auto
+        RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ env.CLOUDFLARE_R2_RELEASES_SK }}
+        WORKFLOW_EXTRA_CHANNEL: ${{ inputs.channel }}
+        WORKFLOW_EXTRA_CLOSURE: ${{ inputs.closure-identity-digest }}
+        WORKFLOW_EXTRA_MATRIX: win-shell-v2
+        WORKFLOW_EXTRA_NAMESPACE: release-${{ inputs.channel }}-win
+        WORKFLOW_EXTRA_PROTOCOL: "1"
+        WORKFLOW_EXTRA_SHELL: ${{ inputs.shell-identity-digest }}
+        WORKFLOW_EXTRA_SMOKE_PROFILE: ${{ inputs.smoke-mode }}
+        WORKFLOW_EXTRA_TARGET: win_x64
+        WORKFLOW_EXTRA_UPDATE_METADATA: ${{ inputs.update-metadata-url }}
+        WORKFLOW_EXTRA_UPDATE_VERSION: ${{ inputs.update-target-version }}
+      with:
+        key: release.smoke.win
+        output: ${{ runner.temp }}\workflow-atoms\win_x64\plan.json
     - name: Setup NSIS
-      if: ${{ inputs.phase != 'finish' && (steps.win_x64_shell_resolution.outputs.state == 'miss' || (inputs.smoke-mode == 'full' && inputs.proof-state != 'hit' && inputs.update-metadata-url == '' && inputs.update-target-version == '')) }}
+      if: ${{ inputs.phase != 'finish' && (steps.win_x64_shell_resolution.outputs.state == 'miss' || (inputs.smoke-mode == 'full' && steps.smoke_plan.outputs.decision == 'execute' && inputs.update-metadata-url == '' && inputs.update-target-version == '')) }}
       uses: ./.github/actions/release/platform/win/nsis
     - name: Build exact win_x64
       id: win_tools_pack_build
@@ -208,8 +225,8 @@ runs:
         RELEASE_OUTER_CACHE_MATCHED_KEY: ${{ steps.cache.outputs.cache-matched-key }}
         RELEASE_REUSE_PLAN_JSON_PATH: ${{ runner.temp }}\release-report\win_x64\reuse-plan.json
         RELEASE_SHELL_BUILD_STATE: ${{ steps.win_x64_shell_resolution.outputs.state }}
-        RELEASE_SMOKE_PROOF_STATE: ${{ inputs.proof-state }}
-        RELEASE_SMOKE_SELECTED_LANES: ${{ inputs.smoke-mode == 'skip' && 'none' || (inputs.smoke-mode == 'full' && inputs.proof-state == 'hit' && 'standalone' || 'profile-default') }}
+        RELEASE_SMOKE_PROOF_STATE: ${{ steps.smoke_plan.outputs.decision == 'replay' && 'hit' || 'miss' }}
+        RELEASE_SMOKE_SELECTED_LANES: ${{ inputs.smoke-mode == 'skip' && 'none' || (steps.smoke_plan.outputs.decision == 'replay' && 'none' || 'profile-default') }}
         RELEASE_TARGET: win_x64
       run: pnpm.cmd exec tools-release write-reuse-plan
     - name: Prepare win_x64 Standalone smoke graph
@@ -253,10 +270,10 @@ runs:
           "OD_RELEASE_EXACT_CACHE_PREFIX=${{ steps.cache.outputs.prefix }}"
           "OD_RELEASE_EXACT_SHELL_STATE=${{ steps.win_x64_shell_resolution.outputs.state }}"
           "OD_RELEASE_EXACT_SHELL_VERSION=${{ steps.win_x64_shell_resolution.outputs.shell_version }}"
-          "OD_RELEASE_EXACT_SMOKE_PROOF=${{ inputs.proof-state }}"
+          "OD_RELEASE_EXACT_SMOKE_PROOF=${{ steps.smoke_plan.outputs.decision == 'replay' && 'hit' || 'miss' }}"
         ) | Out-File -FilePath $env:GITHUB_ENV -Append
     - name: Build win_x64 exact update fixture
-      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode == 'full' && inputs.proof-state != 'hit' && inputs.update-metadata-url == '' && inputs.update-target-version == '' }}
+      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode == 'full' && steps.smoke_plan.outputs.decision == 'execute' && inputs.update-metadata-url == '' && inputs.update-target-version == '' }}
       shell: pwsh
       env:
         OD_TOOLS_PACK_WIN_NSIS_TEST_HOOKS: faults
@@ -273,7 +290,7 @@ runs:
         pnpm.cmd exec tools-pack win validate-payload --namespace "release-${{ inputs.channel }}-win" --payload-path $updateBuild.payloadPath --expected-version $updateVersion --json
     - name: Materialize legacy win_x64 migration fixture
       id: win_x64_legacy_fixture
-      if: ${{ inputs.phase != 'prepare' && inputs.channel == 'beta' && inputs.smoke-mode == 'full' && inputs.proof-state != 'hit' }}
+      if: ${{ inputs.phase != 'prepare' && inputs.channel == 'beta' && inputs.smoke-mode == 'full' && steps.smoke_plan.outputs.decision == 'execute' }}
       shell: pwsh
       env:
         RELEASE_PUBLIC_ORIGIN: ${{ inputs.release-public-origin != '' && inputs.release-public-origin || env.CLOUDFLARE_R2_RELEASES_PUBLIC_ORIGIN }}
@@ -292,7 +309,7 @@ runs:
         "version=$env:LEGACY_WIN_X64_VERSION" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
     - name: Smoke exact win_x64 packaged runtime
       id: win_x64_smoke
-      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode != 'skip' }}
+      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode != 'skip' && steps.smoke_plan.outputs.decision == 'execute' }}
       continue-on-error: true
       working-directory: e2e
       env:
@@ -307,7 +324,7 @@ runs:
         OD_PACKAGED_E2E_WIN_LEGACY_INSTALLER_PATH: ${{ steps.win_x64_legacy_fixture.outputs.installer_path }}
         OD_PACKAGED_E2E_WIN_LEGACY_VERSION: ${{ steps.win_x64_legacy_fixture.outputs.version }}
         OD_PACKAGED_E2E_WIN_MIN_SHELL_VERSION: ${{ env.CLOSURE_MIN_SHELL_VERSION }}
-        OD_PACKAGED_E2E_WIN_SMOKE_LANES: ${{ inputs.smoke-mode == 'full' && inputs.proof-state == 'hit' && 'standalone' || '' }}
+        OD_PACKAGED_E2E_WIN_SMOKE_LANES: ""
         OD_PACKAGED_E2E_WIN_SMOKE_PROFILE: ${{ inputs.smoke-mode }}
         OD_PACKAGED_E2E_WIN_UPDATE_FIXTURE: ${{ inputs.smoke-mode == 'full' && inputs.update-metadata-url == '' && inputs.update-target-version == '' && 'tools-serve' || '' }}
         OD_PACKAGED_E2E_WIN_UPDATE_METADATA_URL: ${{ inputs.update-metadata-url }}
@@ -326,21 +343,20 @@ runs:
           "${{ runner.temp }}\release-build\win_x64\closure-blobs"
         ) | ConvertTo-Json -Compress
         pnpm exec tsx scripts/release-smoke.ts win specs/win.spec.ts
-    - name: Register win_x64 canonical scenario receipts
-      shell: pwsh
-      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode == 'full' && steps.win_x64_smoke.outcome == 'success' }}
-      env:
-        RELEASE_STORAGE_ACCESS_KEY_ID: ${{ env.CLOUDFLARE_R2_RELEASES_AK }}
-        RELEASE_STORAGE_BUCKET: ${{ env.CLOUDFLARE_R2_RELEASES_BUCKET }}
-        RELEASE_STORAGE_ENDPOINT: ${{ env.CLOUDFLARE_R2_RELEASES_URL }}
-        RELEASE_STORAGE_REGION: auto
-        RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ env.CLOUDFLARE_R2_RELEASES_SK }}
-      run: |
-        pnpm exec tools-release workflow register-scenario-receipts `
-          --evidence-source internal-smoke `
-          --plan "${{ inputs.workflow-plan-path }}" `
-          --summary "${{ runner.temp }}\release-report\win_x64\summary.json" `
-          --target win_x64
+    - name: Replay win_x64 smoke summary
+      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode != 'skip' && steps.smoke_plan.outputs.decision == 'replay' }}
+      uses: ./.github/actions/workflow/plan/replay
+      with:
+        output-root: ${{ runner.temp }}\release-report\win_x64
+        plan: ${{ runner.temp }}\workflow-atoms\win_x64\plan.json
+    - name: Request win_x64 smoke receipt
+      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode != 'skip' && steps.smoke_plan.outputs.decision == 'execute' && steps.win_x64_smoke.outcome == 'success' }}
+      uses: ./.github/actions/workflow/receipt/request
+      with:
+        artifact: workflow-receipt-release-smoke-win_x64
+        input-root: ${{ runner.temp }}\release-report\win_x64
+        plan: ${{ runner.temp }}\workflow-atoms\win_x64\plan.json
+        request-root: ${{ runner.temp }}\workflow-atoms\win_x64
     - name: Write win_x64 release report
       shell: pwsh
       if: ${{ always() && (inputs.phase != 'prepare' || failure()) }}
@@ -362,7 +378,7 @@ runs:
       shell: pwsh
       run: Get-Content "${{ runner.temp }}\release-report\win_x64\summary.md" | Add-Content $env:GITHUB_STEP_SUMMARY
     - name: Enforce win_x64 smoke result
-      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode != 'skip' && steps.win_x64_smoke.outcome != 'success' }}
+      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode != 'skip' && steps.smoke_plan.outputs.decision == 'execute' && steps.win_x64_smoke.outcome != 'success' }}
       shell: pwsh
       run: throw "win_x64 packaged smoke failed"
     - name: Persist Windows tools-pack cache

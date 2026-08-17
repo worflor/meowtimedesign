@@ -1,0 +1,45 @@
+{
+  "controlPaths": [
+    ".github/actions/release/platform/mac/exact/action.yml",
+    ".github/workflows/release-beta.yml",
+    "e2e/lib/desktop",
+    "e2e/lib/vitest",
+    "e2e/scripts/release-smoke.ts",
+    "e2e/specs/mac.spec.ts",
+    "e2e/specs/mac"
+  ],
+  "dependsOn": [],
+  "extraDigests": [
+    "channel",
+    "closure",
+    "legacyMigration",
+    "matrix",
+    "namespace",
+    "protocol",
+    "shell",
+    "smokeLanes",
+    "smokeProfile",
+    "target",
+    "updateMetadata",
+    "updateVersion"
+  ],
+  "hashPaths": [
+    ".github/actions/release/platform/mac/exact/action.yml",
+    "e2e/lib/desktop",
+    "e2e/lib/vitest",
+    "e2e/scripts/release-smoke.ts",
+    "e2e/specs/mac.spec.ts",
+    "e2e/specs/mac",
+    "tools/release/src/storage/shell-build.ts",
+    "tools/serve/src/index.ts",
+    "tools/serve/src/updater-fixture.ts"
+  ],
+  "outputs": [
+    {
+      "mediaType": "application/json",
+      "role": "summary",
+      "schemaVersion": 1
+    }
+  ],
+  "schemaVersion": 1
+}

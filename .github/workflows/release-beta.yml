@@ -592,7 +592,6 @@ jobs:
           namespace: ${{ matrix.target == 'mac_arm64' && format('release-{0}', inputs.exact_name) || format('release-{0}-x64', inputs.exact_name) }}
           platform: ${{ matrix.target == 'mac_arm64' && 'darwin-arm64' || 'darwin-x64' }}
           phase: prepare
-          proof-state: ${{ matrix.proof_state }}
           publish: "true"
           release-public-origin: ${{ inputs.release_public_origin }}
           release-version: ${{ needs.metadata.outputs.release_version }}
@@ -605,7 +604,6 @@ jobs:
           target: ${{ matrix.target }}
           update-metadata-url: ""
           update-target-version: ""
-          workflow-plan-path: ${{ runner.temp }}/release-workflow/plan.json
 
       - name: Smoke and publish exact macOS ${{ matrix.target }}
         id: mac_finish
@@ -624,7 +622,6 @@ jobs:
           legacy-migration-enabled: ${{ matrix.target == 'mac_arm64' && inputs.exact_name == 'beta' && 'true' || 'false' }}
           namespace: ${{ matrix.target == 'mac_arm64' && format('release-{0}', inputs.exact_name) || format('release-{0}-x64', inputs.exact_name) }}
           phase: finish
-          proof-state: ${{ matrix.proof_state }}
           platform: ${{ matrix.target == 'mac_arm64' && 'darwin-arm64' || 'darwin-x64' }}
           publish: "true"
           release-public-origin: ${{ inputs.release_public_origin }}
@@ -638,7 +635,6 @@ jobs:
           target: ${{ matrix.target }}
           update-metadata-url: ""
           update-target-version: ""
-          workflow-plan-path: ${{ runner.temp }}/release-workflow/plan.json
 
       - name: Resolve and materialize exact win_x64
         id: win_prepare
@@ -654,7 +650,6 @@ jobs:
           shell-identity-digest: ${{ matrix.shell_identity_digest }}
           amr-profile: ${{ inputs.amr_profile || 'test' }}
           phase: prepare
-          proof-state: ${{ matrix.proof_state }}
           publish: "true"
           release-public-origin: ${{ inputs.release_public_origin }}
           sign-mode: unsigned
@@ -662,7 +657,6 @@ jobs:
           build-target: all
           update-metadata-url: ""
           update-target-version: ""
-          workflow-plan-path: ${{ runner.temp }}/release-workflow/plan.json
 
       - name: Smoke and publish exact win_x64
         id: win_finish
@@ -678,7 +672,6 @@ jobs:
           shell-identity-digest: ${{ matrix.shell_identity_digest }}
           amr-profile: ${{ inputs.amr_profile || 'test' }}
           phase: finish
-          proof-state: ${{ matrix.proof_state }}
           publish: "true"
           release-public-origin: ${{ inputs.release_public_origin }}
           sign-mode: unsigned
@@ -686,7 +679,6 @@ jobs:
           build-target: all
           update-metadata-url: ""
           update-target-version: ""
-          workflow-plan-path: ${{ runner.temp }}/release-workflow/plan.json
 
       - name: Write ${{ matrix.target }} build result
         if: ${{ always() }}

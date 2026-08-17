@@ -1,0 +1,49 @@
+name: Resolve workflow action
+description: Resolve one declared action through the canonical workflow controller
+
+inputs:
+  key:
+    description: Action declaration key
+    required: true
+  mode:
+    description: normal or verify
+    required: false
+    default: normal
+  output:
+    description: Absolute path for the sealed plan
+    required: true
+  prefix:
+    description: Receipt storage prefix
+    required: false
+    default: workflow
+  ref:
+    description: Git commit whose source tree is modeled
+    required: false
+    default: HEAD
+
+outputs:
+  decision:
+    description: execute or replay
+    value: ${{ steps.resolve.outputs.atom_decision }}
+  handle:
+    description: Sealed action handle digest
+    value: ${{ steps.resolve.outputs.atom_handle }}
+  reason:
+    description: Canonical resolution reason
+    value: ${{ steps.resolve.outputs.atom_reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve declared action
+      id: resolve
+      shell: bash
+      run: >-
+        node --experimental-strip-types .github/scripts/workflow.ts resolve
+        --action "${{ inputs.key }}"
+        --extras-env-prefix WORKFLOW_EXTRA_
+        --mode "${{ inputs.mode }}"
+        --ref "${{ inputs.ref }}"
+        --prefix "${{ inputs.prefix }}"
+        --github-output-prefix atom
+        --output "${{ inputs.output }}"

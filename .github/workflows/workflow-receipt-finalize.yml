@@ -1,0 +1,33 @@
+name: workflow-receipt-finalize
+
+on:
+  workflow_run:
+    workflows: [release-beta]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  finalize:
+    name: Finalize trusted workflow receipts
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trusted control plane
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Finalize receipt requests
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_STORAGE_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_RELEASES_AK }}
+          RELEASE_STORAGE_BUCKET: ${{ secrets.CLOUDFLARE_R2_RELEASES_BUCKET }}
+          RELEASE_STORAGE_ENDPOINT: ${{ secrets.CLOUDFLARE_R2_RELEASES_URL }}
+          RELEASE_STORAGE_REGION: auto
+          RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_RELEASES_SK }}
+        run: >-
+          node --experimental-strip-types .github/scripts/workflow.ts finalize-run
+          --run-id "${{ github.event.workflow_run.id }}"
+          --trusted-ref HEAD
