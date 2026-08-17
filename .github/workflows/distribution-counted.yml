@@ -297,10 +297,21 @@ jobs:
           RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_RELEASES_SK }}
         run: pnpm exec tools-release check-storage
 
+      - name: Resolve shared Closure identity
+        id: closure_shared_identity
+        run: |
+          set -euo pipefail
+          digest="$(pnpm exec tools-release identity digest closure.shared.build \
+            --parameter minShellVersion=${{ env.CLOSURE_MIN_SHELL_VERSION }} \
+            --parameter "nodeVersion=$(node -p 'process.version')" \
+            --parameter "packageManager=$(node -p 'require("./package.json").packageManager')")"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
       - name: Build and publish shared Standalone Closure
         uses: ./.github/actions/release/closure/shared
         with:
           channel: ${{ inputs.channel }}
+          identity-digest: ${{ steps.closure_shared_identity.outputs.digest }}
           min-shell-version: ${{ env.CLOSURE_MIN_SHELL_VERSION }}
           publish-enabled: "true"
           release-version: ${{ steps.reservation.outputs.release_version }}

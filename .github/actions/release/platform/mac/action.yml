@@ -180,12 +180,26 @@ runs:
         target: ${{ inputs.target }}
         verify-notarization: ${{ inputs.verify-notarization }}
 
+    - name: Resolve Closure target identity
+      id: closure_identity
+      shell: bash
+      run: |
+        set -euo pipefail
+        digest="$(pnpm exec tools-release identity digest closure.target.${{ steps.platform.outputs.closure_platform }} \
+          --parameter nodeModulesAbi=$(node -p 'process.versions.modules') \
+          --parameter nodeNapi=$(node -p 'process.versions.napi') \
+          --parameter nodeVersion=$(node -p 'process.version') \
+          --parameter packageManager=$(node -p 'require("./package.json").packageManager') \
+          --parameter target=${{ steps.platform.outputs.closure_platform }})"
+        echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
     - name: Resolve Standalone target contribution
       id: closure_target
       uses: ./.github/actions/release/closure/target/mac
       with:
         build-dir: ${{ steps.platform.outputs.build_dir }}
         channel: ${{ inputs.channel }}
+        identity-digest: ${{ steps.closure_identity.outputs.digest }}
         platform: ${{ steps.platform.outputs.closure_platform }}
         public-origin: ${{ env.RELEASE_PUBLIC_ORIGIN }}
         publish-enabled: ${{ env.RELEASE_PUBLISH_SIDE_EFFECTS != 'false' }}

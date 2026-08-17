@@ -10,7 +10,8 @@ cli
   .option("--input <path>", "request or receipt JSON input")
   .option("--output <path>", "write canonical JSON output")
   .option("--root <path>", "workspace root (default: cwd)")
-  .action(async (action: string, options: { input?: string; output?: string; root?: string }) => {
+  .option("--target <target>", "select one canonical release target")
+  .action(async (action: string, options: { input?: string; output?: string; root?: string; target?: string }) => {
     const { readIdentityRegistry } = await import("./identity/declaration/registry.ts");
     const { resolveReleaseIdentity, resolveReleaseWorkspaceRoot } = await import("./identity/resolution/resolve.ts");
     const {
@@ -30,6 +31,7 @@ cli
       releaseWorkflowRequestSchema,
       replayTargetMaterializationInputSchema,
       scenarioReceiptRegistrationInputSchema,
+      selectReleaseWorkflowTargetExecution,
     } = await import("./workflow/index.ts");
     const workspaceRoot = resolveReleaseWorkspaceRoot(options.root);
     const sealed = declareDesktopReleaseWorkflow(await readIdentityRegistry(workspaceRoot));
@@ -62,6 +64,17 @@ cli
     if (action === "execution") {
       const input = releaseWorkflowExecutionInputSchema.parse(JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown);
       const execution = compileReleaseWorkflowExecution(input.plan, input.request);
+      const body = `${JSON.stringify(execution, null, 2)}\n`;
+      if (options.output == null) process.stdout.write(body);
+      else writeFileSync(resolve(options.output), body, "utf8");
+      return;
+    }
+    if (action === "target-execution") {
+      if (options.target == null) throw new Error("workflow target-execution requires --target");
+      const execution = selectReleaseWorkflowTargetExecution(
+        JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown,
+        options.target,
+      );
       const body = `${JSON.stringify(execution, null, 2)}\n`;
       if (options.output == null) process.stdout.write(body);
       else writeFileSync(resolve(options.output), body, "utf8");

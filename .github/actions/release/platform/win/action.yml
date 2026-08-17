@@ -114,12 +114,30 @@ runs:
         shell-version: ${{ inputs.release-version }}
         sign-mode: ${{ inputs.sign-mode }}
 
+    - name: Resolve Closure target identity
+      id: closure_identity
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = "Stop"
+        $nodeModulesAbi = node -p "process.versions.modules"
+        $nodeNapi = node -p "process.versions.napi"
+        $nodeVersion = node -p "process.version"
+        $packageManager = node -p "require('./package.json').packageManager"
+        $digest = (pnpm.cmd exec tools-release identity digest closure.target.win32-x64 `
+          --parameter "nodeModulesAbi=$nodeModulesAbi" `
+          --parameter "nodeNapi=$nodeNapi" `
+          --parameter "nodeVersion=$nodeVersion" `
+          --parameter "packageManager=$packageManager" `
+          --parameter target=win32-x64).Trim()
+        "digest=$digest" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
     - name: Resolve Standalone target contribution
       id: closure_target
       uses: ./.github/actions/release/closure/target/win
       with:
         build-dir: ${{ runner.temp }}\release-build\win_x64
         channel: ${{ inputs.channel }}
+        identity-digest: ${{ steps.closure_identity.outputs.digest }}
         public-origin: ${{ env.RELEASE_PUBLIC_ORIGIN }}
         publish-enabled: ${{ env.RELEASE_PUBLISH_SIDE_EFFECTS != 'false' }}
         release-version: ${{ inputs.closure-version }}

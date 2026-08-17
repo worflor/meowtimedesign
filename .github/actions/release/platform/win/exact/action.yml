@@ -46,9 +46,8 @@ inputs:
     description: Optional external updater target version
     required: true
   workflow-plan-path:
-    description: Canonical workflow plan used to register scenario receipts
-    required: false
-    default: ""
+    description: Canonical workflow plan that exclusively owns release decisions and identities
+    required: true
 
 outputs:
   candidate_manifest_url:
@@ -73,18 +72,6 @@ runs:
         if (@("all", "prepare", "finish") -notcontains "${{ inputs.phase }}") {
           throw "unsupported exact Windows orchestration phase: ${{ inputs.phase }}"
         }
-    - name: Resolve win_x64 canonical scenario state
-      shell: pwsh
-      if: ${{ inputs.smoke-mode == 'full' && inputs.workflow-plan-path != '' }}
-      run: |
-        $plan = Get-Content -Raw "${{ inputs.workflow-plan-path }}" | ConvertFrom-Json
-        $miss = @($plan.nodes | Where-Object {
-          $_.effect -eq "proof" -and
-          $_.inputs.semantic.releaseTarget -eq "win_x64" -and
-          $_.decision -eq "execute"
-        }).Count -gt 0
-        $state = if ($miss) { "miss" } else { "hit" }
-        "OD_RELEASE_CANONICAL_SCENARIO_PROOF=$state" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
     - name: Setup release toolchain
       if: ${{ inputs.phase != 'finish' }}
       uses: ./.github/actions/release/platform/setup
@@ -101,16 +88,28 @@ runs:
       if: ${{ inputs.phase != 'finish' }}
       shell: pwsh
       run: pnpm install --frozen-lockfile
-    - name: Resolve win_x64 Shell smoke acceptance identity
-      if: ${{ inputs.phase != 'finish' }}
+    - name: Consume win_x64 canonical workflow execution
+      id: canonical
       shell: pwsh
       run: |
         $ErrorActionPreference = "Stop"
-        $digest = (pnpm.cmd exec tools-release identity digest shell.spec.win_x64 --parameter matrix=win-shell-v2 --parameter standaloneProtocolVersion=1).Trim()
-        if ($LASTEXITCODE -ne 0 -or $digest -notmatch '^sha256:[0-9a-f]{64}$') {
-          throw "invalid win_x64 Shell smoke acceptance digest: $digest"
+        $executionPath = Join-Path (Split-Path -Parent "${{ inputs.workflow-plan-path }}") "execution.json"
+        $targetPath = Join-Path $env:RUNNER_TEMP "release-workflow\target-win_x64.json"
+        pnpm.cmd exec tools-release workflow target-execution --input $executionPath --target win_x64 --output $targetPath
+        if ($LASTEXITCODE -ne 0) { throw "canonical win_x64 execution resolution failed" }
+        $target = Get-Content -Raw $targetPath | ConvertFrom-Json
+        $shellDigests = @($target.shell.identityDigests.PSObject.Properties.Value)
+        $closureDigests = @($target.closureTarget.identityDigests.PSObject.Properties.Value)
+        if ($shellDigests.Count -ne 1 -or $closureDigests.Count -ne 1) {
+          throw "canonical win_x64 build nodes must expose exactly one identity each"
         }
-        "RELEASE_SHELL_SPEC_DIGEST=$digest" | Out-File -FilePath $env:GITHUB_ENV -Append
+        $proofState = if (@($target.proofs | Where-Object { $_.decision -eq "execute" }).Count -gt 0) { "miss" } else { "hit" }
+        @(
+          "shell_digest=$($shellDigests[0])"
+          "closure_digest=$($closureDigests[0])"
+          "proof_state=$proofState"
+        ) | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        "OD_RELEASE_CANONICAL_SCENARIO_PROOF=$proofState" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
     - name: Download shared Standalone contract
       if: ${{ inputs.phase != 'finish' }}
       uses: actions/download-artifact@v8
@@ -134,6 +133,7 @@ runs:
         RELEASE_STORAGE_ENDPOINT: ${{ env.CLOUDFLARE_R2_RELEASES_URL }}
         RELEASE_STORAGE_REGION: auto
         RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ env.CLOUDFLARE_R2_RELEASES_SK }}
+        RELEASE_WORKFLOW_IDENTITY_DIGEST: ${{ steps.canonical.outputs.shell_digest }}
       run: |
         $ErrorActionPreference = "Stop"
         New-Item -ItemType Directory -Force -Path "${{ runner.temp }}\release-build\win_x64" | Out-Null
@@ -144,7 +144,7 @@ runs:
         pnpm.cmd exec tools-release resolve-shell-build
         if ($LASTEXITCODE -ne 0) { throw "immutable Windows Shell resolution failed with exit code $LASTEXITCODE" }
     - name: Setup NSIS
-      if: ${{ inputs.phase != 'finish' && (steps.win_x64_shell_resolution.outputs.state == 'miss' || (inputs.smoke-mode == 'full' && ((inputs.workflow-plan-path != '' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF != 'hit') || (inputs.workflow-plan-path == '' && steps.win_x64_shell_resolution.outputs.smoke_proof != 'hit')) && inputs.update-metadata-url == '' && inputs.update-target-version == '')) }}
+      if: ${{ inputs.phase != 'finish' && (steps.win_x64_shell_resolution.outputs.state == 'miss' || (inputs.smoke-mode == 'full' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF != 'hit' && inputs.update-metadata-url == '' && inputs.update-target-version == '')) }}
       uses: ./.github/actions/release/platform/win/nsis
     - name: Build exact win_x64
       id: win_tools_pack_build
@@ -199,6 +199,7 @@ runs:
         RELEASE_STORAGE_ENDPOINT: ${{ env.CLOUDFLARE_R2_RELEASES_URL }}
         RELEASE_STORAGE_REGION: auto
         RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ env.CLOUDFLARE_R2_RELEASES_SK }}
+        RELEASE_WORKFLOW_IDENTITY_DIGEST: ${{ steps.canonical.outputs.shell_digest }}
       run: pnpm exec tools-release register-shell-build
     - name: Resolve win_x64 Standalone target contribution
       id: closure_target
@@ -207,6 +208,7 @@ runs:
       with:
         build-dir: ${{ runner.temp }}\release-build\win_x64
         channel: ${{ inputs.channel }}
+        identity-digest: ${{ steps.canonical.outputs.closure_digest }}
         public-origin: ${{ inputs.release-public-origin }}
         publish-enabled: "true"
         release-version: ${{ inputs.closure-version }}
@@ -219,8 +221,8 @@ runs:
         RELEASE_OUTER_CACHE_MATCHED_KEY: ${{ steps.cache.outputs.cache-matched-key }}
         RELEASE_REUSE_PLAN_JSON_PATH: ${{ runner.temp }}\release-report\win_x64\reuse-plan.json
         RELEASE_SHELL_BUILD_STATE: ${{ steps.win_x64_shell_resolution.outputs.state }}
-        RELEASE_SMOKE_PROOF_STATE: ${{ inputs.workflow-plan-path != '' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF || steps.win_x64_shell_resolution.outputs.smoke_proof }}
-        RELEASE_SMOKE_SELECTED_LANES: ${{ inputs.smoke-mode == 'skip' && 'none' || (inputs.smoke-mode == 'full' && ((inputs.workflow-plan-path != '' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF == 'hit') || (inputs.workflow-plan-path == '' && steps.win_x64_shell_resolution.outputs.smoke_proof == 'hit')) && 'standalone' || 'profile-default') }}
+        RELEASE_SMOKE_PROOF_STATE: ${{ env.OD_RELEASE_CANONICAL_SCENARIO_PROOF }}
+        RELEASE_SMOKE_SELECTED_LANES: ${{ inputs.smoke-mode == 'skip' && 'none' || (inputs.smoke-mode == 'full' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF == 'hit' && 'standalone' || 'profile-default') }}
         RELEASE_TARGET: win_x64
       run: pnpm.cmd exec tools-release write-reuse-plan
     - name: Prepare win_x64 Standalone smoke graph
@@ -264,10 +266,10 @@ runs:
           "OD_RELEASE_EXACT_CACHE_PREFIX=${{ steps.cache.outputs.prefix }}"
           "OD_RELEASE_EXACT_SHELL_STATE=${{ steps.win_x64_shell_resolution.outputs.state }}"
           "OD_RELEASE_EXACT_SHELL_VERSION=${{ steps.win_x64_shell_resolution.outputs.shell_version }}"
-          "OD_RELEASE_EXACT_SMOKE_PROOF=${{ steps.win_x64_shell_resolution.outputs.smoke_proof }}"
+          "OD_RELEASE_EXACT_SMOKE_PROOF=${{ env.OD_RELEASE_CANONICAL_SCENARIO_PROOF }}"
         ) | Out-File -FilePath $env:GITHUB_ENV -Append
     - name: Build win_x64 exact update fixture
-      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode == 'full' && ((inputs.workflow-plan-path != '' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF != 'hit') || (inputs.workflow-plan-path == '' && env.OD_RELEASE_EXACT_SMOKE_PROOF != 'hit')) && inputs.update-metadata-url == '' && inputs.update-target-version == '' }}
+      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode == 'full' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF != 'hit' && inputs.update-metadata-url == '' && inputs.update-target-version == '' }}
       shell: pwsh
       env:
         OD_TOOLS_PACK_WIN_NSIS_TEST_HOOKS: faults
@@ -284,7 +286,7 @@ runs:
         pnpm.cmd exec tools-pack win validate-payload --namespace "release-${{ inputs.channel }}-win" --payload-path $updateBuild.payloadPath --expected-version $updateVersion --json
     - name: Materialize legacy win_x64 migration fixture
       id: win_x64_legacy_fixture
-      if: ${{ inputs.phase != 'prepare' && inputs.channel == 'beta' && inputs.smoke-mode == 'full' && ((inputs.workflow-plan-path != '' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF != 'hit') || (inputs.workflow-plan-path == '' && env.OD_RELEASE_EXACT_SMOKE_PROOF != 'hit')) }}
+      if: ${{ inputs.phase != 'prepare' && inputs.channel == 'beta' && inputs.smoke-mode == 'full' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF != 'hit' }}
       shell: pwsh
       env:
         RELEASE_PUBLIC_ORIGIN: ${{ inputs.release-public-origin != '' && inputs.release-public-origin || env.CLOUDFLARE_R2_RELEASES_PUBLIC_ORIGIN }}
@@ -318,7 +320,7 @@ runs:
         OD_PACKAGED_E2E_WIN_LEGACY_INSTALLER_PATH: ${{ steps.win_x64_legacy_fixture.outputs.installer_path }}
         OD_PACKAGED_E2E_WIN_LEGACY_VERSION: ${{ steps.win_x64_legacy_fixture.outputs.version }}
         OD_PACKAGED_E2E_WIN_MIN_SHELL_VERSION: ${{ env.CLOSURE_MIN_SHELL_VERSION }}
-        OD_PACKAGED_E2E_WIN_SMOKE_LANES: ${{ inputs.smoke-mode == 'full' && ((inputs.workflow-plan-path != '' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF == 'hit') || (inputs.workflow-plan-path == '' && env.OD_RELEASE_EXACT_SMOKE_PROOF == 'hit')) && 'standalone' || '' }}
+        OD_PACKAGED_E2E_WIN_SMOKE_LANES: ${{ inputs.smoke-mode == 'full' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF == 'hit' && 'standalone' || '' }}
         OD_PACKAGED_E2E_WIN_SMOKE_PROFILE: ${{ inputs.smoke-mode }}
         OD_PACKAGED_E2E_WIN_UPDATE_FIXTURE: ${{ inputs.smoke-mode == 'full' && inputs.update-metadata-url == '' && inputs.update-target-version == '' && 'tools-serve' || '' }}
         OD_PACKAGED_E2E_WIN_UPDATE_METADATA_URL: ${{ inputs.update-metadata-url }}
@@ -337,26 +339,9 @@ runs:
           "${{ runner.temp }}\release-build\win_x64\closure-blobs"
         ) | ConvertTo-Json -Compress
         pnpm exec tsx scripts/release-smoke.ts win specs/win.spec.ts
-    - name: Register win_x64 Electron Shell full-smoke proof
-      shell: pwsh
-      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode == 'full' && env.OD_RELEASE_EXACT_SMOKE_PROOF != 'hit' && inputs.update-metadata-url == '' && inputs.update-target-version == '' }}
-      env:
-        RELEASE_CHANNEL: ${{ inputs.channel }}
-        RELEASE_PUBLIC_ORIGIN: ${{ inputs.release-public-origin != '' && inputs.release-public-origin || env.CLOUDFLARE_R2_RELEASES_PUBLIC_ORIGIN }}
-        RELEASE_SHELL_BUILD_JSON_PATH: ${{ runner.temp }}\release-build\win_x64\build.json
-        RELEASE_SHELL_PLAN_JSON_PATH: ${{ runner.temp }}\release-build\win_x64\shell-plan.json
-        RELEASE_SHELL_SMOKE_MATRIX: win-shell-v2
-        RELEASE_SHELL_SMOKE_SUMMARY_PATH: ${{ runner.temp }}\release-report\win_x64\summary.json
-        RELEASE_STANDALONE_PROTOCOL_VERSION: "1"
-        RELEASE_STORAGE_ACCESS_KEY_ID: ${{ env.CLOUDFLARE_R2_RELEASES_AK }}
-        RELEASE_STORAGE_BUCKET: ${{ env.CLOUDFLARE_R2_RELEASES_BUCKET }}
-        RELEASE_STORAGE_ENDPOINT: ${{ env.CLOUDFLARE_R2_RELEASES_URL }}
-        RELEASE_STORAGE_REGION: auto
-        RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ env.CLOUDFLARE_R2_RELEASES_SK }}
-      run: pnpm exec tools-release register-shell-smoke
     - name: Register win_x64 canonical scenario receipts
       shell: pwsh
-      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode == 'full' && inputs.workflow-plan-path != '' && steps.win_x64_smoke.outcome == 'success' }}
+      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode == 'full' && steps.win_x64_smoke.outcome == 'success' }}
       env:
         RELEASE_STORAGE_ACCESS_KEY_ID: ${{ env.CLOUDFLARE_R2_RELEASES_AK }}
         RELEASE_STORAGE_BUCKET: ${{ env.CLOUDFLARE_R2_RELEASES_BUCKET }}

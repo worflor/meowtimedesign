@@ -4,6 +4,9 @@ description: Build, optionally publish, and hand off the once-owned Closure comp
 inputs:
   channel:
     required: true
+  identity-digest:
+    description: Canonical workflow identity digest for the shared Closure node
+    required: true
   min-shell-version:
     description: Frozen initial Shell compatibility declaration for this channel
     required: true
@@ -25,25 +28,13 @@ runs:
           exit 1
         fi
 
-    - name: Resolve shared Closure build identity
-      id: identity
-      shell: bash
-      run: |
-        set -euo pipefail
-        digest="$(pnpm exec tools-release identity digest closure.shared.build \
-          --parameter minShellVersion=${{ inputs.min-shell-version }} \
-          --parameter nodeVersion=$(node -p 'process.version') \
-          --parameter packageManager=$(node -p 'require("./package.json").packageManager'))"
-        [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-        echo "digest=$digest" >> "$GITHUB_OUTPUT"
-
     - name: Resolve immutable shared Closure build
       id: closure_resolution
       shell: bash
       env:
         RELEASE_CHANNEL: ${{ inputs.channel }}
         RELEASE_CLOSURE_BLOB_ROOT: ${{ runner.temp }}/release-build/closure-shared/blobs
-        RELEASE_CLOSURE_BUILD_DIGEST: ${{ steps.identity.outputs.digest }}
+        RELEASE_CLOSURE_BUILD_DIGEST: ${{ inputs.identity-digest }}
         RELEASE_CLOSURE_BUILD_KIND: shared
         RELEASE_CLOSURE_BUILD_TOKEN: shared
         RELEASE_CLOSURE_CONTRIBUTION_JSON_PATH: ${{ runner.temp }}/release-build/closure-shared/shared-contribution.json
@@ -75,7 +66,7 @@ runs:
       env:
         RELEASE_CHANNEL: ${{ inputs.channel }}
         RELEASE_CLOSURE_BLOB_ROOT: ${{ runner.temp }}/release-build/closure-shared/blobs
-        RELEASE_CLOSURE_BUILD_DIGEST: ${{ steps.identity.outputs.digest }}
+        RELEASE_CLOSURE_BUILD_DIGEST: ${{ inputs.identity-digest }}
         RELEASE_CLOSURE_BUILD_KIND: shared
         RELEASE_CLOSURE_BUILD_TOKEN: shared
         RELEASE_CLOSURE_CONTRIBUTION_JSON_PATH: ${{ runner.temp }}/release-build/closure-shared/shared-contribution.json

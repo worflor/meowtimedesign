@@ -6,6 +6,9 @@ inputs:
     required: true
   channel:
     required: true
+  identity-digest:
+    description: Canonical workflow identity digest for this Closure target node
+    required: true
   platform:
     description: darwin-arm64 or darwin-x64
     required: true
@@ -24,27 +27,13 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Resolve Closure target identity
-      id: identity
-      shell: bash
-      run: |
-        set -euo pipefail
-        digest="$(pnpm exec tools-release identity digest closure.target.${{ inputs.platform }} \
-          --parameter nodeModulesAbi=$(node -p 'process.versions.modules') \
-          --parameter nodeNapi=$(node -p 'process.versions.napi') \
-          --parameter nodeVersion=$(node -p 'process.version') \
-          --parameter packageManager=$(node -p 'require("./package.json").packageManager') \
-          --parameter target=${{ inputs.platform }})"
-        [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-        echo "digest=$digest" >> "$GITHUB_OUTPUT"
-
     - name: Resolve immutable Closure target
       id: resolve
       shell: bash
       env:
         RELEASE_CHANNEL: ${{ inputs.channel }}
         RELEASE_CLOSURE_BLOB_ROOT: ${{ inputs.build-dir }}/closure-blobs
-        RELEASE_CLOSURE_BUILD_DIGEST: ${{ steps.identity.outputs.digest }}
+        RELEASE_CLOSURE_BUILD_DIGEST: ${{ inputs.identity-digest }}
         RELEASE_CLOSURE_BUILD_KIND: target
         RELEASE_CLOSURE_BUILD_TOKEN: target-${{ inputs.platform }}
         RELEASE_CLOSURE_CONTRIBUTION_JSON_PATH: ${{ inputs.build-dir }}/target-contribution.json
@@ -87,7 +76,7 @@ runs:
       env:
         RELEASE_CHANNEL: ${{ inputs.channel }}
         RELEASE_CLOSURE_BLOB_ROOT: ${{ inputs.build-dir }}/closure-blobs
-        RELEASE_CLOSURE_BUILD_DIGEST: ${{ steps.identity.outputs.digest }}
+        RELEASE_CLOSURE_BUILD_DIGEST: ${{ inputs.identity-digest }}
         RELEASE_CLOSURE_BUILD_KIND: target
         RELEASE_CLOSURE_BUILD_TOKEN: target-${{ inputs.platform }}
         RELEASE_CLOSURE_CONTRIBUTION_JSON_PATH: ${{ inputs.build-dir }}/target-contribution.json

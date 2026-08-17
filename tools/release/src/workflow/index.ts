@@ -10,6 +10,8 @@ export {
   compileReleaseWorkflowExecution,
   releaseWorkflowExecutionInputSchema,
   releaseWorkflowExecutionSchema,
+  selectReleaseWorkflowTargetExecution,
+  type ReleaseWorkflowTargetExecution,
 } from "./execution.ts";
 export { createReleaseWorkflowRequestFromEnv } from "./request.ts";
 export { registerScenarioReceipts, scenarioReceiptRegistrationInputSchema } from "./scenario-receipts.ts";

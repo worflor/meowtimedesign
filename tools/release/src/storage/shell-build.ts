@@ -324,6 +324,13 @@ export async function resolveShellReleaseDigest(
   })).digest;
 }
 
+async function authoritativeShellReleaseDigest(plan: Pick<ShellBuildPlan, "profileDigest" | "target">): Promise<Digest> {
+  const planned = optional("RELEASE_WORKFLOW_IDENTITY_DIGEST");
+  return planned.length > 0
+    ? requiredDigest("RELEASE_WORKFLOW_IDENTITY_DIGEST")
+    : await resolveShellReleaseDigest(plan);
+}
+
 function sha256(bytes: Buffer): Digest {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
@@ -430,14 +437,18 @@ export async function resolveShellBuild(): Promise<void> {
   const planPath = required("RELEASE_SHELL_PLAN_JSON_PATH");
   const outputPath = required("RELEASE_SHELL_BUILD_JSON_PATH");
   const plan = validateShellBuildPlan(JSON.parse(readFileSync(planPath, "utf8")) as unknown, channel);
-  const smokeMatrix = optional("RELEASE_SHELL_SMOKE_MATRIX");
+  // Canonical workflow scenario receipts own proof reuse. The historical
+  // aggregate Shell proof is consulted only by non-workflow callers.
+  const smokeMatrix = optional("RELEASE_WORKFLOW_IDENTITY_DIGEST").length > 0
+    ? ""
+    : optional("RELEASE_SHELL_SMOKE_MATRIX");
   const shellSpecDigest = smokeMatrix.length > 0
     ? requiredDigest("RELEASE_SHELL_SPEC_DIGEST")
     : null;
   const standaloneProtocolVersion = smokeMatrix.length > 0
     ? requiredPositiveInteger("RELEASE_STANDALONE_PROTOCOL_VERSION")
     : null;
-  const releaseDigest = await resolveShellReleaseDigest(plan);
+  const releaseDigest = await authoritativeShellReleaseDigest(plan);
   const storage = storageConfigFromEnv();
   const indexKey = shellBuildIndexObjectKey(
     channel,
@@ -449,7 +460,7 @@ export async function resolveShellBuild(): Promise<void> {
   if (object == null) {
     writeJson(outputPath, { indexKey, shell: plan.shell, state: "miss", target: plan.target });
     writeGithubOutput("state", "miss");
-    if (optional("RELEASE_SHELL_SMOKE_MATRIX").length > 0) writeGithubOutput("smoke_proof", "miss");
+    if (smokeMatrix.length > 0) writeGithubOutput("smoke_proof", "miss");
     console.log(`Shell build miss: ${indexKey}`);
     return;
   }
@@ -577,7 +588,7 @@ export async function registerShellSmokeProof(): Promise<void> {
   if (missing.length > 0) throw new Error(`Shell smoke proof is missing successful scenarios: ${missing.join(", ")}`);
   const releaseVersion = String(build.releaseVersion ?? plan.releaseVersion ?? "");
   parseReleaseVersion(releaseVersion, channel);
-  const releaseDigest = await resolveShellReleaseDigest(plan);
+  const releaseDigest = await authoritativeShellReleaseDigest(plan);
   const record: ShellSmokeProofRecord = {
     specDigest,
     channel,
@@ -646,7 +657,7 @@ export async function registerShellBuild(): Promise<void> {
     || typeof build.shell.version !== "string"
   ) throw new Error("built Shell report does not match the resolved Shell source identity");
   parseReleaseVersion(build.shell.version, channel);
-  const releaseDigest = await resolveShellReleaseDigest(plan);
+  const releaseDigest = await authoritativeShellReleaseDigest(plan);
   const storage = storageConfigFromEnv();
   if (plan.releaseVersion == null) {
     throw new Error("public Shell registration requires a release version");

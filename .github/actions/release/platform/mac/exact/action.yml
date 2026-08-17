@@ -79,9 +79,8 @@ inputs:
     required: false
     default: ""
   workflow-plan-path:
-    description: Canonical workflow plan used to register scenario receipts
-    required: false
-    default: ""
+    description: Canonical workflow plan that exclusively owns release decisions and identities
+    required: true
 
 outputs:
   candidate_manifest_url:
@@ -108,18 +107,6 @@ runs:
           all|prepare|finish) ;;
           *) echo "unsupported exact macOS orchestration phase: ${{ inputs.phase }}" >&2; exit 1 ;;
         esac
-    - name: Resolve ${{ inputs.target }} canonical scenario state
-      shell: bash
-      if: ${{ inputs.smoke-mode == 'full' && inputs.workflow-plan-path != '' }}
-      run: |
-        set -euo pipefail
-        if jq -e --arg target "${{ inputs.target }}" \
-          '.nodes | any(.effect == "proof" and .inputs.semantic.releaseTarget == $target and .decision == "execute")' \
-          "${{ inputs.workflow-plan-path }}" >/dev/null; then
-          echo "OD_RELEASE_CANONICAL_SCENARIO_PROOF=miss" >> "$GITHUB_ENV"
-        else
-          echo "OD_RELEASE_CANONICAL_SCENARIO_PROOF=hit" >> "$GITHUB_ENV"
-        fi
     - name: Setup release toolchain
       if: ${{ inputs.phase != 'finish' }}
       uses: ./.github/actions/release/platform/setup
@@ -136,16 +123,26 @@ runs:
       if: ${{ inputs.phase != 'finish' }}
       shell: bash
       run: pnpm install --frozen-lockfile
-    - name: Resolve ${{ inputs.target }} Shell smoke acceptance identity
-      if: ${{ inputs.phase != 'finish' }}
+    - name: Consume ${{ inputs.target }} canonical workflow execution
+      id: canonical
       shell: bash
       run: |
         set -euo pipefail
-        digest="$(pnpm exec tools-release identity digest shell.spec.${{ inputs.target }} \
-          --parameter matrix=${{ inputs.shell-smoke-matrix }} \
-          --parameter standaloneProtocolVersion=1)"
-        [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-        echo "RELEASE_SHELL_SPEC_DIGEST=$digest" >> "$GITHUB_ENV"
+        execution_path="$(dirname "${{ inputs.workflow-plan-path }}")/execution.json"
+        target_path="$RUNNER_TEMP/release-workflow/target-${{ inputs.target }}.json"
+        pnpm exec tools-release workflow target-execution \
+          --input "$execution_path" \
+          --target "${{ inputs.target }}" \
+          --output "$target_path"
+        shell_digest="$(jq -er '.shell.identityDigests | values | if length == 1 then .[0] else error("Shell node must expose one identity") end' "$target_path")"
+        closure_digest="$(jq -er '.closureTarget.identityDigests | values | if length == 1 then .[0] else error("Closure node must expose one identity") end' "$target_path")"
+        proof_state="$(jq -r 'if any(.proofs[]; .decision == "execute") then "miss" else "hit" end' "$target_path")"
+        {
+          echo "shell_digest=$shell_digest"
+          echo "closure_digest=$closure_digest"
+          echo "proof_state=$proof_state"
+        } >> "$GITHUB_OUTPUT"
+        echo "OD_RELEASE_CANONICAL_SCENARIO_PROOF=$proof_state" >> "$GITHUB_ENV"
     - name: Download shared Standalone contract
       if: ${{ inputs.phase != 'finish' }}
       uses: actions/download-artifact@v8
@@ -164,6 +161,7 @@ runs:
         RELEASE_SHELL_SMOKE_MATRIX: ${{ inputs.shell-smoke-matrix }}
         RELEASE_SHELL_PLAN_JSON_PATH: ${{ runner.temp }}/release-build/${{ inputs.target }}/shell-plan.json
         RELEASE_STANDALONE_PROTOCOL_VERSION: "1"
+        RELEASE_WORKFLOW_IDENTITY_DIGEST: ${{ steps.canonical.outputs.shell_digest }}
         RELEASE_STORAGE_ACCESS_KEY_ID: ${{ env.CLOUDFLARE_R2_RELEASES_AK }}
         RELEASE_STORAGE_BUCKET: ${{ env.CLOUDFLARE_R2_RELEASES_BUCKET }}
         RELEASE_STORAGE_ENDPOINT: ${{ env.CLOUDFLARE_R2_RELEASES_URL }}
@@ -272,6 +270,7 @@ runs:
       with:
         build-dir: ${{ runner.temp }}/release-build/${{ inputs.target }}
         channel: ${{ inputs.channel }}
+        identity-digest: ${{ steps.canonical.outputs.closure_digest }}
         platform: ${{ inputs.platform }}
         public-origin: ${{ inputs.release-public-origin }}
         publish-enabled: "true"
@@ -285,8 +284,8 @@ runs:
         RELEASE_OUTER_CACHE_MATCHED_KEY: ${{ steps.cache.outputs.cache-matched-key }}
         RELEASE_REUSE_PLAN_JSON_PATH: ${{ runner.temp }}/release-report/${{ inputs.target }}/reuse-plan.json
         RELEASE_SHELL_BUILD_STATE: ${{ steps.shell_resolution.outputs.state }}
-        RELEASE_SMOKE_PROOF_STATE: ${{ inputs.workflow-plan-path != '' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF || steps.shell_resolution.outputs.smoke_proof }}
-        RELEASE_SMOKE_SELECTED_LANES: ${{ inputs.smoke-mode == 'skip' && 'none' || (inputs.smoke-mode == 'full' && ((inputs.workflow-plan-path != '' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF == 'hit') || (inputs.workflow-plan-path == '' && steps.shell_resolution.outputs.smoke_proof == 'hit')) && 'standalone' || (inputs.smoke-mode == 'full' && inputs.smoke-lanes-on-miss != '' && inputs.smoke-lanes-on-miss || 'profile-default')) }}
+        RELEASE_SMOKE_PROOF_STATE: ${{ env.OD_RELEASE_CANONICAL_SCENARIO_PROOF }}
+        RELEASE_SMOKE_SELECTED_LANES: ${{ inputs.smoke-mode == 'skip' && 'none' || (inputs.smoke-mode == 'full' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF == 'hit' && 'standalone' || (inputs.smoke-mode == 'full' && inputs.smoke-lanes-on-miss != '' && inputs.smoke-lanes-on-miss || 'profile-default')) }}
         RELEASE_TARGET: ${{ inputs.target }}
       run: pnpm exec tools-release write-reuse-plan
     - name: Prepare ${{ inputs.target }} Standalone smoke graph
@@ -331,6 +330,7 @@ runs:
         RELEASE_PUBLIC_ORIGIN: ${{ inputs.release-public-origin != '' && inputs.release-public-origin || env.CLOUDFLARE_R2_RELEASES_PUBLIC_ORIGIN }}
         RELEASE_SHELL_BUILD_JSON_PATH: ${{ runner.temp }}/release-build/${{ inputs.target }}/build.json
         RELEASE_SHELL_PLAN_JSON_PATH: ${{ runner.temp }}/release-build/${{ inputs.target }}/shell-plan.json
+        RELEASE_WORKFLOW_IDENTITY_DIGEST: ${{ steps.canonical.outputs.shell_digest }}
         RELEASE_STORAGE_ACCESS_KEY_ID: ${{ env.CLOUDFLARE_R2_RELEASES_AK }}
         RELEASE_STORAGE_BUCKET: ${{ env.CLOUDFLARE_R2_RELEASES_BUCKET }}
         RELEASE_STORAGE_ENDPOINT: ${{ env.CLOUDFLARE_R2_RELEASES_URL }}
@@ -369,12 +369,12 @@ runs:
           echo "OD_RELEASE_EXACT_CACHE_PREFIX=${{ steps.cache.outputs.prefix }}"
           echo "OD_RELEASE_EXACT_SHELL_STATE=${{ steps.shell_resolution.outputs.state }}"
           echo "OD_RELEASE_EXACT_SHELL_VERSION=${{ steps.shell_resolution.outputs.shell_version }}"
-          echo "OD_RELEASE_EXACT_SMOKE_PROOF=${{ steps.shell_resolution.outputs.smoke_proof }}"
+          echo "OD_RELEASE_EXACT_SMOKE_PROOF=${{ env.OD_RELEASE_CANONICAL_SCENARIO_PROOF }}"
         } >> "$GITHUB_ENV"
     - name: Build exact ${{ inputs.target }} update fixture
       shell: bash
       id: update_fixture
-      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode == 'full' && ((inputs.workflow-plan-path != '' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF != 'hit') || (inputs.workflow-plan-path == '' && env.OD_RELEASE_EXACT_SMOKE_PROOF != 'hit')) && inputs.update-metadata-url == '' && inputs.update-target-version == '' }}
+      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode == 'full' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF != 'hit' && inputs.update-metadata-url == '' && inputs.update-target-version == '' }}
       run: |
         set -euo pipefail
         version="${{ inputs.release-version }}"
@@ -406,7 +406,7 @@ runs:
     - name: Materialize legacy ${{ inputs.target }} migration fixture
       shell: bash
       id: legacy_fixture
-      if: ${{ inputs.phase != 'prepare' && inputs.legacy-migration-enabled == 'true' && inputs.smoke-mode == 'full' && ((inputs.workflow-plan-path != '' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF != 'hit') || (inputs.workflow-plan-path == '' && env.OD_RELEASE_EXACT_SMOKE_PROOF != 'hit')) }}
+      if: ${{ inputs.phase != 'prepare' && inputs.legacy-migration-enabled == 'true' && inputs.smoke-mode == 'full' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF != 'hit' }}
       env:
         RELEASE_PUBLIC_ORIGIN: ${{ inputs.release-public-origin != '' && inputs.release-public-origin || env.CLOUDFLARE_R2_RELEASES_PUBLIC_ORIGIN }}
       run: |
@@ -459,7 +459,7 @@ runs:
         OD_PACKAGED_E2E_MAC_LEGACY_DMG_PATH: ${{ steps.legacy_fixture.outputs.dmg_path }}
         OD_PACKAGED_E2E_MAC_LEGACY_VERSION: ${{ steps.legacy_fixture.outputs.version }}
         OD_PACKAGED_E2E_MAC_MIN_SHELL_VERSION: ${{ env.CLOSURE_MIN_SHELL_VERSION }}
-        OD_PACKAGED_E2E_MAC_SMOKE_LANES: ${{ inputs.smoke-mode == 'full' && (((inputs.workflow-plan-path != '' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF == 'hit') || (inputs.workflow-plan-path == '' && env.OD_RELEASE_EXACT_SMOKE_PROOF == 'hit')) && 'standalone' || inputs.smoke-lanes-on-miss) || '' }}
+        OD_PACKAGED_E2E_MAC_SMOKE_LANES: ${{ inputs.smoke-mode == 'full' && (env.OD_RELEASE_CANONICAL_SCENARIO_PROOF == 'hit' && 'standalone' || inputs.smoke-lanes-on-miss) || '' }}
         OD_PACKAGED_E2E_MAC_SMOKE_PROFILE: ${{ inputs.smoke-mode }}
         OD_PACKAGED_E2E_NAMESPACE: ${{ inputs.namespace }}
         OD_PACKAGED_E2E_RELEASE_CHANNEL: ${{ inputs.channel }}
@@ -471,26 +471,9 @@ runs:
         OD_PACKAGED_E2E_REPORT_DIR: ${{ runner.temp }}/release-report/${{ inputs.target }}
         OD_PACKAGED_E2E_TOOLS_PACK_DIR: ${{ runner.temp }}/tools-pack
       run: pnpm exec tsx scripts/release-smoke.ts mac specs/mac.spec.ts
-    - name: Register ${{ inputs.target }} Electron Shell full-smoke proof
-      shell: bash
-      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode == 'full' && env.OD_RELEASE_EXACT_SMOKE_PROOF != 'hit' && inputs.update-metadata-url == '' && inputs.update-target-version == '' }}
-      env:
-        RELEASE_CHANNEL: ${{ inputs.channel }}
-        RELEASE_PUBLIC_ORIGIN: ${{ inputs.release-public-origin != '' && inputs.release-public-origin || env.CLOUDFLARE_R2_RELEASES_PUBLIC_ORIGIN }}
-        RELEASE_SHELL_BUILD_JSON_PATH: ${{ runner.temp }}/release-build/${{ inputs.target }}/build.json
-        RELEASE_SHELL_PLAN_JSON_PATH: ${{ runner.temp }}/release-build/${{ inputs.target }}/shell-plan.json
-        RELEASE_SHELL_SMOKE_MATRIX: ${{ inputs.shell-smoke-matrix }}
-        RELEASE_SHELL_SMOKE_SUMMARY_PATH: ${{ runner.temp }}/release-report/${{ inputs.target }}/summary.json
-        RELEASE_STANDALONE_PROTOCOL_VERSION: "1"
-        RELEASE_STORAGE_ACCESS_KEY_ID: ${{ env.CLOUDFLARE_R2_RELEASES_AK }}
-        RELEASE_STORAGE_BUCKET: ${{ env.CLOUDFLARE_R2_RELEASES_BUCKET }}
-        RELEASE_STORAGE_ENDPOINT: ${{ env.CLOUDFLARE_R2_RELEASES_URL }}
-        RELEASE_STORAGE_REGION: auto
-        RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ env.CLOUDFLARE_R2_RELEASES_SK }}
-      run: pnpm exec tools-release register-shell-smoke
     - name: Register ${{ inputs.target }} canonical scenario receipts
       shell: bash
-      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode == 'full' && inputs.workflow-plan-path != '' && steps.smoke.outcome == 'success' }}
+      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode == 'full' && steps.smoke.outcome == 'success' }}
       env:
         RELEASE_STORAGE_ACCESS_KEY_ID: ${{ env.CLOUDFLARE_R2_RELEASES_AK }}
         RELEASE_STORAGE_BUCKET: ${{ env.CLOUDFLARE_R2_RELEASES_BUCKET }}

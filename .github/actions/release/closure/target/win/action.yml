@@ -6,6 +6,9 @@ inputs:
     required: true
   channel:
     required: true
+  identity-digest:
+    description: Canonical workflow identity digest for this Closure target node
+    required: true
   public-origin:
     required: false
     default: ""
@@ -21,33 +24,13 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Resolve Closure target identity
-      id: identity
-      shell: pwsh
-      run: |
-        $ErrorActionPreference = "Stop"
-        $nodeModulesAbi = node -p "process.versions.modules"
-        $nodeNapi = node -p "process.versions.napi"
-        $nodeVersion = node -p "process.version"
-        $packageManager = node -p "require('./package.json').packageManager"
-        $digest = (pnpm.cmd exec tools-release identity digest closure.target.win32-x64 `
-          --parameter "nodeModulesAbi=$nodeModulesAbi" `
-          --parameter "nodeNapi=$nodeNapi" `
-          --parameter "nodeVersion=$nodeVersion" `
-          --parameter "packageManager=$packageManager" `
-          --parameter target=win32-x64).Trim()
-        if ($LASTEXITCODE -ne 0 -or $digest -notmatch '^sha256:[0-9a-f]{64}$') {
-          throw "invalid win32-x64 Closure identity: $digest"
-        }
-        "digest=$digest" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-
     - name: Resolve immutable Closure target
       id: resolve
       shell: pwsh
       env:
         RELEASE_CHANNEL: ${{ inputs.channel }}
         RELEASE_CLOSURE_BLOB_ROOT: ${{ inputs.build-dir }}\closure-blobs
-        RELEASE_CLOSURE_BUILD_DIGEST: ${{ steps.identity.outputs.digest }}
+        RELEASE_CLOSURE_BUILD_DIGEST: ${{ inputs.identity-digest }}
         RELEASE_CLOSURE_BUILD_KIND: target
         RELEASE_CLOSURE_BUILD_TOKEN: target-win32-x64
         RELEASE_CLOSURE_CONTRIBUTION_JSON_PATH: ${{ inputs.build-dir }}\target-contribution.json
@@ -94,7 +77,7 @@ runs:
       env:
         RELEASE_CHANNEL: ${{ inputs.channel }}
         RELEASE_CLOSURE_BLOB_ROOT: ${{ inputs.build-dir }}\closure-blobs
-        RELEASE_CLOSURE_BUILD_DIGEST: ${{ steps.identity.outputs.digest }}
+        RELEASE_CLOSURE_BUILD_DIGEST: ${{ inputs.identity-digest }}
         RELEASE_CLOSURE_BUILD_KIND: target
         RELEASE_CLOSURE_BUILD_TOKEN: target-win32-x64
         RELEASE_CLOSURE_CONTRIBUTION_JSON_PATH: ${{ inputs.build-dir }}\target-contribution.json

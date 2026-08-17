@@ -324,24 +324,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Build shared Standalone Closure
-        uses: ./.github/actions/release/closure/shared
-        env:
-          RELEASE_COMMIT: ${{ env.BUILT_SHA }}
-          RELEASE_PUBLIC_ORIGIN: ${{ inputs.release_public_origin != '' && inputs.release_public_origin || vars.CLOUDFLARE_R2_RELEASES_PUBLIC_ORIGIN }}
-          RELEASE_STORAGE_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_RELEASES_AK }}
-          RELEASE_STORAGE_BUCKET: ${{ secrets.CLOUDFLARE_R2_RELEASES_BUCKET }}
-          RELEASE_STORAGE_ENDPOINT: ${{ secrets.CLOUDFLARE_R2_RELEASES_URL }}
-          RELEASE_STORAGE_REGION: auto
-          RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_RELEASES_SK }}
-          RELEASE_VERSION_LOCK_KEY: ${{ steps.reservation.outputs.version_lock_key }}
-          RELEASE_VERSION_LOCK_REQUIRED: "true"
-        with:
-          channel: ${{ inputs.exact_name }}
-          min-shell-version: ${{ steps.exact.outputs.closure_min_shell_version }}
-          publish-enabled: "true"
-          release-version: ${{ steps.reservation.outputs.release_version || steps.exact.outputs.release_version }}
-
       - name: Compile canonical release workflow plan
         id: execution
         env:
@@ -413,10 +395,12 @@ jobs:
             '{plan: $plan[0], request: $request[0]}' > "$workflow_root/execution-input.json"
           pnpm exec tools-release workflow execution --input "$workflow_root/execution-input.json" --output "$workflow_root/execution.json"
           build_matrix="$(jq -c '.buildMatrix' "$workflow_root/execution.json")"
+          shared_closure_digest="$(jq -er '.sharedClosure.identityDigests | values | if length == 1 then .[0] else error("shared Closure node must expose one identity") end' "$workflow_root/execution.json")"
           {
             echo "build_matrix=$build_matrix"
             echo "acceptance_matrix=$(jq -c '.acceptanceMatrix' "$workflow_root/execution.json")"
             echo "attest_targets=$(jq -c '.attestTargets' "$workflow_root/execution.json")"
+            echo "shared_closure_digest=$shared_closure_digest"
             for target in mac_arm64 mac_x64 win_x64; do
               if jq -e --arg target "$target" '.replayTargets | index($target) != null' "$workflow_root/execution.json" >/dev/null; then
                 echo "${target}_execution=replay"
@@ -433,6 +417,25 @@ jobs:
             jq -r '.executeTargets[] | "| `\(.)` | execute |"' "$workflow_root/execution.json"
             jq -r '.replayTargets[] | "| `\(.)` | replay |"' "$workflow_root/execution.json"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Materialize canonical shared Standalone Closure
+        uses: ./.github/actions/release/closure/shared
+        env:
+          RELEASE_COMMIT: ${{ env.BUILT_SHA }}
+          RELEASE_PUBLIC_ORIGIN: ${{ inputs.release_public_origin != '' && inputs.release_public_origin || vars.CLOUDFLARE_R2_RELEASES_PUBLIC_ORIGIN }}
+          RELEASE_STORAGE_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_RELEASES_AK }}
+          RELEASE_STORAGE_BUCKET: ${{ secrets.CLOUDFLARE_R2_RELEASES_BUCKET }}
+          RELEASE_STORAGE_ENDPOINT: ${{ secrets.CLOUDFLARE_R2_RELEASES_URL }}
+          RELEASE_STORAGE_REGION: auto
+          RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_RELEASES_SK }}
+          RELEASE_VERSION_LOCK_KEY: ${{ steps.reservation.outputs.version_lock_key }}
+          RELEASE_VERSION_LOCK_REQUIRED: "true"
+        with:
+          channel: ${{ inputs.exact_name }}
+          identity-digest: ${{ steps.execution.outputs.shared_closure_digest }}
+          min-shell-version: ${{ steps.exact.outputs.closure_min_shell_version }}
+          publish-enabled: "true"
+          release-version: ${{ steps.reservation.outputs.release_version || steps.exact.outputs.release_version }}
 
       - name: Materialize replayed platform projections
         env:

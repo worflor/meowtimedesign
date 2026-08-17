@@ -297,10 +297,22 @@ jobs:
           ref: ${{ needs.metadata.outputs.commit }}
       - name: Setup release toolchain
         uses: ./.github/actions/release/platform/setup
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Resolve shared Closure identity
+        id: closure_shared_identity
+        run: |
+          set -euo pipefail
+          digest="$(pnpm exec tools-release identity digest closure.shared.build \
+            --parameter minShellVersion=${{ vars.RELEASE_SHELL_VERSION_MIN_STABLE }} \
+            --parameter "nodeVersion=$(node -p 'process.version')" \
+            --parameter "packageManager=$(node -p 'require("./package.json").packageManager')")"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: Build shared Standalone Closure
         uses: ./.github/actions/release/closure/shared
         with:
           channel: stable
+          identity-digest: ${{ steps.closure_shared_identity.outputs.digest }}
           min-shell-version: ${{ vars.RELEASE_SHELL_VERSION_MIN_STABLE }}
           publish-enabled: "true"
           release-version: ${{ needs.metadata.outputs.release_version }}
