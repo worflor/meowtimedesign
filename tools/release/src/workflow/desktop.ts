@@ -44,7 +44,7 @@ const TARGETS: readonly TargetDefinition[] = [
       {
         boundaries: { ...sharedBoundaries, auth: "not-exercised", landing: "synthetic-state" },
         doesNotProve: ["real account authentication", "real coding-agent connectivity", "public feed availability"],
-        id: "mac-arm64-shell-lifecycle",
+        id: "mac-shell-lifecycle",
         identity: "shell.spec.mac_arm64.lifecycle",
         kind: "installed",
         proves: ["installed product reaches its terminal surface", "Shell and Standalone update transaction", "clean stop and installed-outer restart"],
@@ -52,7 +52,7 @@ const TARGETS: readonly TargetDefinition[] = [
       {
         boundaries: sharedBoundaries,
         doesNotProve: ["real account authentication", "public feed availability"],
-        id: "mac-arm64-shell-silent-update",
+        id: "mac-shell-silent-update",
         identity: "shell.spec.mac_arm64.silent-update",
         kind: "updater",
         proves: ["silent policy authorizes one cold-start activation"],
@@ -60,7 +60,7 @@ const TARGETS: readonly TargetDefinition[] = [
       {
         boundaries: sharedBoundaries,
         doesNotProve: ["real account authentication", "public feed availability"],
-        id: "mac-arm64-shell-rollback",
+        id: "mac-shell-rollback",
         identity: "shell.spec.mac_arm64.rollback",
         kind: "updater",
         proves: ["failed successor preserves lastSuccessful", "later healthy successor converges"],
@@ -68,7 +68,7 @@ const TARGETS: readonly TargetDefinition[] = [
       {
         boundaries: { ...sharedBoundaries, release: "public-immutable" },
         doesNotProve: ["real account authentication", "real coding-agent connectivity"],
-        id: "mac-arm64-legacy-migration",
+        id: "mac-legacy-migration",
         identity: "shell.spec.mac_arm64.legacy-migration",
         kind: "installed",
         proves: ["legacy minVersion routes through installer", "product data survives architecture migration"],
@@ -84,7 +84,7 @@ const TARGETS: readonly TargetDefinition[] = [
       {
         boundaries: { ...sharedBoundaries, auth: "not-exercised" },
         doesNotProve: ["real account authentication", "real coding-agent connectivity", "public feed availability"],
-        id: "mac-x64-shell-lifecycle",
+        id: "mac-shell-lifecycle",
         identity: "shell.spec.mac_x64.lifecycle",
         kind: "installed",
         proves: ["installed product reaches its terminal surface", "Shell and Standalone update transaction", "clean stop and installed-outer restart"],
@@ -92,7 +92,7 @@ const TARGETS: readonly TargetDefinition[] = [
       {
         boundaries: sharedBoundaries,
         doesNotProve: ["real account authentication", "public feed availability"],
-        id: "mac-x64-shell-silent-update",
+        id: "mac-shell-silent-update",
         identity: "shell.spec.mac_x64.silent-update",
         kind: "updater",
         proves: ["silent policy authorizes one cold-start activation"],
@@ -100,7 +100,7 @@ const TARGETS: readonly TargetDefinition[] = [
       {
         boundaries: sharedBoundaries,
         doesNotProve: ["real account authentication", "public feed availability"],
-        id: "mac-x64-shell-rollback",
+        id: "mac-shell-rollback",
         identity: "shell.spec.mac_x64.rollback",
         kind: "updater",
         proves: ["failed successor preserves lastSuccessful", "later healthy successor converges"],
@@ -116,7 +116,7 @@ const TARGETS: readonly TargetDefinition[] = [
       {
         boundaries: { ...sharedBoundaries, auth: "not-exercised" },
         doesNotProve: ["real account authentication", "real coding-agent connectivity", "public feed availability"],
-        id: "win-x64-shell-lifecycle",
+        id: "win-shell-lifecycle",
         identity: "shell.spec.win_x64.lifecycle",
         kind: "installed",
         proves: ["installed product reaches its terminal surface", "Shell and Standalone update transaction", "clean stop and installed-outer restart"],
@@ -124,7 +124,7 @@ const TARGETS: readonly TargetDefinition[] = [
       {
         boundaries: sharedBoundaries,
         doesNotProve: ["real account authentication", "public feed availability"],
-        id: "win-x64-shell-silent-update",
+        id: "win-shell-silent-update",
         identity: "shell.spec.win_x64.silent-update",
         kind: "updater",
         proves: ["silent policy authorizes one cold-start activation"],
@@ -132,7 +132,7 @@ const TARGETS: readonly TargetDefinition[] = [
       {
         boundaries: sharedBoundaries,
         doesNotProve: ["real account authentication", "public feed availability"],
-        id: "win-x64-shell-rollback",
+        id: "win-shell-rollback",
         identity: "shell.spec.win_x64.rollback",
         kind: "updater",
         proves: ["failed successor preserves lastSuccessful", "later healthy successor converges"],
@@ -140,7 +140,7 @@ const TARGETS: readonly TargetDefinition[] = [
       {
         boundaries: { agent: "not-exercised", auth: "not-exercised", landing: "not-exercised", release: "temporary-fixture" },
         doesNotProve: ["renderer readiness", "real account authentication"],
-        id: "win-x64-native-install-boundaries",
+        id: "win-native-install-boundaries",
         identity: "shell.spec.win_x64.native-install",
         kind: "installed",
         proves: ["native install transaction and repair", "registry and uninstall ownership", "embedded extraction tool"],
@@ -148,7 +148,7 @@ const TARGETS: readonly TargetDefinition[] = [
       {
         boundaries: { ...sharedBoundaries, release: "public-immutable" },
         doesNotProve: ["real account authentication", "real coding-agent connectivity"],
-        id: "win-x64-legacy-migration",
+        id: "win-legacy-migration",
         identity: "shell.spec.win_x64.legacy-migration",
         kind: "installed",
         proves: ["legacy minVersion routes through installer", "product data survives architecture migration"],
@@ -256,9 +256,9 @@ export function declareDesktopReleaseWorkflow(identities: IdentityRegistry): Sea
       id: `shell-${definition.target.replace("_", "-")}`,
       identity: { ids: [definition.identity], parameters: ["profile", "target"] },
       inputs: { semantic: ["buildTarget", "channel", "profile", "shellType", "signMode", "target"] },
-      outputs: [{ mediaType: "application/json", role: "shellBuild", schemaVersion: 4 }],
+      outputs: [{ mediaType: "application/json", role: "shellBuild", schemaVersion: 5 }],
       schemaVersion: 1,
-      witness: "shell-build-record/v4",
+      witness: "shell-build-record/v5",
     });
     closureTargets.set(definition.target, closureTarget);
     shells.set(definition.target, shell);
@@ -270,6 +270,7 @@ export function declareDesktopReleaseWorkflow(identities: IdentityRegistry): Sea
           channel: request("release.channel"),
           matrix: target(definition.target, "target.smokeMatrix"),
           namespace: target(definition.target, "target.namespace"),
+          releaseTarget: literal(definition.target),
           scenario: literal(scenario.id),
           standaloneProtocolVersion: target(definition.target, "target.standaloneProtocolVersion"),
         },
@@ -278,9 +279,9 @@ export function declareDesktopReleaseWorkflow(identities: IdentityRegistry): Sea
         dependsOn: [closureTarget, shell],
         doesNotProve: scenario.doesNotProve,
         executor,
-        id: scenario.id,
+        id: `${definition.target.replace("_", "-")}-${scenario.id}`,
         identity: { ids: [scenario.identity], parameters: ["matrix", "standaloneProtocolVersion"] },
-        inputs: { semantic: ["channel", "matrix", "namespace", "scenario", "standaloneProtocolVersion"] },
+        inputs: { semantic: ["channel", "matrix", "namespace", "releaseTarget", "scenario", "standaloneProtocolVersion"] },
         outputs: [{ mediaType: "application/json", role: "proof", schemaVersion: 1 }],
         portability: { channel: "scoped" as const, namespace: "scoped" as const, releaseVersion: "semantic" as const },
         proves: scenario.proves,

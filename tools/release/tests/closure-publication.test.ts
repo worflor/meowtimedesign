@@ -25,6 +25,10 @@ function digest(bytes: string | Buffer): `sha256:${string}` {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
+function sha512(bytes: string | Buffer): string {
+  return createHash("sha512").update(bytes).digest("base64");
+}
+
 async function writeFixture(root: string, options: { closureVersion?: string; minShellVersion?: string } = {}): Promise<{
   assetsRoot: string;
   closureVersion: string;
@@ -111,6 +115,7 @@ async function writeFixture(root: string, options: { closureVersion?: string; mi
           digest: digest("dmg"),
           name: "Open Design-release-beta.dmg",
           objectKey: "beta/shells/electron/versions/0.18.0-beta.3/darwin-arm64/Open Design-release-beta.dmg",
+          sha512: sha512("dmg"),
           size: Buffer.byteLength("dmg"),
           url: "https://releases.open-design.test/beta/shells/electron/versions/0.18.0-beta.3/darwin-arm64/Open%20Design-release-beta.dmg",
         },
@@ -119,6 +124,7 @@ async function writeFixture(root: string, options: { closureVersion?: string; mi
           digest: digest("legacy payload"),
           name: "Open Design-release-beta-payload.zip",
           objectKey: "beta/shells/electron/versions/0.18.0-beta.3/darwin-arm64/Open Design-release-beta-payload.zip",
+          sha512: sha512("legacy payload"),
           size: Buffer.byteLength("legacy payload"),
           url: "https://releases.open-design.test/beta/shells/electron/versions/0.18.0-beta.3/darwin-arm64/Open%20Design-release-beta-payload.zip",
         },
@@ -185,6 +191,7 @@ async function writeResolvedWindowsShellFixture(root: string): Promise<{
     digest: digest(bytes[kind]),
     name,
     objectKey: `${prefix}/${name}`,
+    sha512: sha512(bytes[kind]),
     size: bytes[kind].byteLength,
     url: `https://releases.open-design.test/${prefix}/${name}`,
   });
@@ -371,6 +378,40 @@ describe("Standalone Closure release publication", () => {
     expect(platform.feed.url).toBe(
       "https://releases.open-design.test/beta/versions/0.18.0-beta.4/shells/electron/win_x64/latest.yml",
     );
+  });
+
+  it("plans a Shell projection using only the authoritative remote record", async () => {
+    const root = await mkdtemp(join(tmpdir(), "od-shell-remote-projection-"));
+    temporaryRoots.push(root);
+    const fixture = await writeResolvedWindowsShellFixture(root);
+    await rm(fixture.assetsRoot, { recursive: true });
+    await mkdir(fixture.assetsRoot, { recursive: true });
+
+    await expect(execFileAsync(process.execPath, ["--experimental-strip-types", publishPlatformPath], {
+      cwd: workspaceRoot,
+      env: {
+        ...process.env,
+        RELEASE_ASSET_SUFFIX: ".unsigned",
+        RELEASE_ASSETS_DIR: fixture.assetsRoot,
+        RELEASE_CHANNEL: "beta",
+        RELEASE_CLOSURE_ENABLED: "false",
+        RELEASE_MANIFEST_DIR: fixture.manifestRoot,
+        RELEASE_OUTPUTS_PATH: join(fixture.manifestRoot, "outputs.json"),
+        RELEASE_PUBLIC_ORIGIN: "https://releases.open-design.test",
+        RELEASE_PUBLISH_SIDE_EFFECTS: "false",
+        RELEASE_SHELL_BUILD_JSON_PATH: fixture.shellBuildJsonPath,
+        RELEASE_SHELL_ENABLED: "true",
+        RELEASE_SHELL_REMOTE_PROJECTION: "true",
+        RELEASE_TARGET: "win_x64",
+        RELEASE_VERSION: "0.18.0-beta.4",
+        WIN_INCLUDE_ZIP: "true",
+      },
+    })).resolves.toMatchObject({ stdout: expect.stringContaining("planned") });
+
+    const feed = await readFile(join(fixture.assetsRoot, "latest.yml"), "utf8");
+    expect(feed).toContain('version: "0.18.0-beta.3"');
+    const platform = JSON.parse(await readFile(join(fixture.manifestRoot, "win_x64.json"), "utf8"));
+    expect(platform.artifacts.installer.digest).toBe(digest("immutable installer"));
   });
 
   it("binds an independently versioned Shell artifact and its two digests to the release", async () => {

@@ -23,6 +23,13 @@ type GetObjectOptions = StorageConfig & {
   objectKey: string;
 };
 
+type CopyObjectOptions = StorageConfig & {
+  cacheControl: string;
+  contentType: string;
+  objectKey: string;
+  sourceObjectKey: string;
+};
+
 function hmac(key: Buffer | string, value: string): Buffer {
   return createHmac("sha256", key).update(value, "utf8").digest();
 }
@@ -183,6 +190,42 @@ export async function putImmutableStorageObject(options: PutObjectOptions): Prom
     throw new Error(`immutable storage object conflicts: ${options.objectKey}`);
   }
   return "reused";
+}
+
+export async function copyStorageObject(options: CopyObjectOptions): Promise<void> {
+  const payloadHash = hash("");
+  const { canonicalUri, url } = objectUrl(options, options.objectKey);
+  const encodedSource = `/${[options.bucket, ...options.sourceObjectKey.split("/")].map(encodePathSegment).join("/")}`;
+  const headers: Record<string, string> = {
+    "cache-control": options.cacheControl,
+    "content-type": options.contentType,
+    host: url.host,
+    "x-amz-content-sha256": payloadHash,
+    "x-amz-copy-source": encodedSource,
+    "x-amz-metadata-directive": "REPLACE",
+    "x-amz-date": "",
+  };
+  if (options.sessionToken != null && options.sessionToken.length > 0) {
+    headers["x-amz-security-token"] = options.sessionToken;
+  }
+  const response = await signedFetchWithRetry(`COPY ${url.toString()}`, () => {
+    const { amzDate, dateStamp } = amzTimestamp(new Date());
+    const signedHeaders = { ...headers, "x-amz-date": amzDate };
+    return {
+      init: {
+        headers: {
+          ...signedHeaders,
+          Authorization: authorizationHeader(options, "PUT", canonicalUri, signedHeaders, payloadHash, dateStamp),
+        },
+        method: "PUT",
+      },
+      url,
+    };
+  });
+  const body = await response.text().catch(() => "");
+  if (!response.ok || /<Error(?:\s|>)/u.test(body)) {
+    throw new Error(`COPY ${url} failed with HTTP ${response.status}${body.length > 0 ? `: ${body}` : ""}`);
+  }
 }
 
 export async function getStorageObject(options: GetObjectOptions): Promise<{ bytes: Buffer; etag: string; text: string } | null> {

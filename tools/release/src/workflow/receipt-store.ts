@@ -11,7 +11,7 @@ import {
 } from "../storage/shell-build.ts";
 import {
   getStorageObject,
-  putImmutableStorageObject,
+  putStorageObjectWithStatus,
   type StorageConfig,
 } from "../storage/s3-upload.ts";
 import {
@@ -57,6 +57,7 @@ function adoptedReceipt(
       ...(mediaType == null ? {} : { mediaType }),
       role,
       schemaVersion,
+      value: record,
     })),
     provenance: { ...record.provenance, adoptedFrom: source },
     recordedAt: record.createdAt,
@@ -90,7 +91,7 @@ async function adoptShellBuild(
       channel,
       releaseDigest,
     );
-    return adoptedReceipt(input, record, "shell-build-record/v4");
+    return adoptedReceipt(input, record, "shell-build-record/v5");
   } catch {
     return null;
   }
@@ -141,11 +142,35 @@ export async function registerReleaseWorkflowReceipt(
   receiptInput: unknown,
 ): Promise<"created" | "reused"> {
   const receipt = releaseWorkflowReceiptSchema.parse(receiptInput);
-  return await putImmutableStorageObject({
+  const objectKey = workflowReceiptObjectKey(receipt);
+  const result = await putStorageObjectWithStatus({
     ...storage,
     body: Buffer.from(`${JSON.stringify(receipt, null, 2)}\n`),
     cacheControl: "public, max-age=31536000, immutable",
     contentType: "application/json; charset=utf-8",
-    objectKey: workflowReceiptObjectKey(receipt),
+    headers: { "if-none-match": "*" },
+    objectKey,
   });
+  if (result.ok) return "created";
+  if (result.status !== 412) {
+    throw new Error(`workflow receipt PUT ${result.url} failed with HTTP ${result.status}: ${result.body}`);
+  }
+  const existingObject = await getStorageObject({ ...storage, objectKey });
+  if (existingObject == null) throw new Error(`workflow receipt disappeared after immutable conflict: ${objectKey}`);
+  const existing = releaseWorkflowReceiptSchema.parse(JSON.parse(existingObject.text) as unknown);
+  const contract = (value: ReleaseWorkflowReceipt) => canonicalMetadataJson({
+    definitionDigest: value.definitionDigest,
+    effect: value.effect,
+    executionDigest: value.executionDigest,
+    nodeId: value.nodeId,
+    outputs: value.outputs.map(({ mediaType, role, schemaVersion }) => ({
+      ...(mediaType == null ? {} : { mediaType }),
+      role,
+      schemaVersion,
+    })),
+    semanticDigest: value.semanticDigest,
+    status: value.status,
+  });
+  if (contract(existing) !== contract(receipt)) throw new Error(`workflow receipt conflicts: ${objectKey}`);
+  return "reused";
 }

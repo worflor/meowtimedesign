@@ -102,6 +102,7 @@ describe("immutable Shell build storage", () => {
           digest: `sha256:${"b".repeat(64)}`,
           name: "Open Design.dmg",
           objectKey: "beta/shells/electron/versions/0.19.0-beta.1/darwin-arm64/Open Design.dmg",
+          sha512: `${"A".repeat(86)}==`,
           size: 42,
           url: "https://releases.example/beta/shells/electron/versions/0.19.0-beta.1/darwin-arm64/Open Design.dmg",
         },
@@ -111,7 +112,7 @@ describe("immutable Shell build storage", () => {
       provenance: {},
       profileDigest: plan.profileDigest,
       releaseDigest,
-      schemaVersion: 4,
+      schemaVersion: 5,
       shell: { ...plan.shell, version: "0.19.0-beta.1" },
       target: "darwin-arm64",
     }, validatedPlan, "beta", releaseDigest);
@@ -127,7 +128,7 @@ describe("immutable Shell build storage", () => {
       provenance: {},
       profileDigest: plan.profileDigest,
       releaseDigest,
-      schemaVersion: 4,
+      schemaVersion: 5,
       shell: { ...plan.shell, sourceDigest: `sha256:${"c".repeat(64)}` },
       target: "darwin-arm64",
     }, plan, "beta", `sha256:${"8".repeat(64)}`)).toThrow(/scope/);

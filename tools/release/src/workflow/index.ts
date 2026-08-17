@@ -1,5 +1,18 @@
 export { createReleaseWorkflow } from "./factory.ts";
 export { declareDesktopReleaseWorkflow } from "./desktop.ts";
+export {
+  candidateTargetProjectionInputSchema,
+  materializeReplayTarget,
+  projectCandidateTargetFromShellReceipt,
+  replayTargetMaterializationInputSchema,
+} from "./candidate-projection.ts";
+export {
+  compileReleaseWorkflowExecution,
+  releaseWorkflowExecutionInputSchema,
+  releaseWorkflowExecutionSchema,
+} from "./execution.ts";
+export { createReleaseWorkflowRequestFromEnv } from "./request.ts";
+export { registerScenarioReceipts, scenarioReceiptRegistrationInputSchema } from "./scenario-receipts.ts";
 export { planReleaseWorkflow, type ReleaseWorkflowPlannerDependencies } from "./planner.ts";
 export {
   createReleaseWorkflowReceiptResolver,

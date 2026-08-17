@@ -3,8 +3,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import { normalizePublicUrl, optional, publicUrl, required, storageConfigFromEnv, writeJson } from "../storage/common.ts";
 import { putImmutableStorageObject } from "../storage/s3-upload.ts";
 import { releaseCandidateId, releaseCandidatePrefix, validateReleaseCandidateSpec } from "./identity.ts";
-
-const RELEASE_CANDIDATE_CACHE_CONTROL = "public, max-age=2592000, immutable";
+import { RELEASE_CANDIDATE_CACHE_CONTROL } from "./policy.ts";
 
 type TargetManifest = Readonly<{
   candidateId: string;

@@ -51,6 +51,7 @@ export type ShellBuildArtifactRecord = {
   name: string;
   objectKey: string;
   size: number;
+  sha512: string;
   url: string;
 };
 
@@ -60,7 +61,7 @@ export type ShellBuildRecord = {
   createdAt: string;
   provenance: Record<string, unknown>;
   releaseDigest: Digest;
-  schemaVersion: 4;
+  schemaVersion: 5;
   shell: ShellIdentity;
   target: ShellTarget;
 };
@@ -83,7 +84,7 @@ export type ShellSmokeProofRecord = {
 const digestPattern = /^sha256:[0-9a-f]{64}$/;
 const tokenPattern = /^[a-z][a-z0-9-]*$/;
 const artifactKindPattern = /^[a-z][A-Za-z0-9]*$/;
-const SHELL_BUILD_STORAGE_EPOCH = 1 as const;
+const SHELL_BUILD_STORAGE_EPOCH = 2 as const;
 
 function assertRecord(value: unknown, label: string): asserts value is Record<string, unknown> {
   if (value == null || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
@@ -272,7 +273,7 @@ export function validateShellBuildRecord(
   assertRecord(value.shell, "Shell build record shell");
   assertRecord(value.artifacts, "Shell build record artifacts");
   if (
-    value.schemaVersion !== 4
+    value.schemaVersion !== 5
     || value.channel !== channel
     || value.releaseDigest !== releaseDigest
     || value.target !== expected.target
@@ -301,6 +302,8 @@ export function validateShellBuildRecord(
       || typeof raw.size !== "number"
       || !Number.isSafeInteger(raw.size)
       || raw.size <= 0
+      || typeof raw.sha512 !== "string"
+      || !/^[A-Za-z0-9+/]{86}==$/.test(raw.sha512)
       || typeof raw.url !== "string"
     ) throw new Error(`invalid Shell build record artifact ${kind}`);
     artifacts[kind] = { ...(raw as ShellBuildArtifactRecord), url: normalizePublicUrl(raw.url) };
@@ -663,7 +666,15 @@ export async function registerShellBuild(): Promise<void> {
     const name = basename(raw.path);
     const objectKey = `${prefix}/${digest.slice("sha256:".length)}-${name}`;
     await putImmutable(storage, { bodyPath: raw.path, contentType: contentType(name), objectKey });
-    artifacts[kind] = { contentType: contentType(name), digest, name, objectKey, size: raw.size, url: publicUrl(publicOrigin, "", objectKey) };
+    artifacts[kind] = {
+      contentType: contentType(name),
+      digest,
+      name,
+      objectKey,
+      sha512: createHash("sha512").update(bytes).digest("base64"),
+      size: raw.size,
+      url: publicUrl(publicOrigin, "", objectKey),
+    };
   }
   requirePlannedArtifacts(plan, artifacts);
   const record: ShellBuildRecord = {
@@ -672,7 +683,7 @@ export async function registerShellBuild(): Promise<void> {
     createdAt: new Date().toISOString(),
     provenance: githubInfo(),
     releaseDigest,
-    schemaVersion: 4,
+    schemaVersion: 5,
     shell: build.shell,
     target: plan.target,
   };

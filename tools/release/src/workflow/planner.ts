@@ -131,8 +131,13 @@ function assertReceipt(
     || receipt.nodeId !== expected.nodeId
     || receipt.semanticDigest !== expected.semanticDigest
   ) throw new Error("receipt identity does not match the planned node");
-  const expectedOutputs = expected.outputs.map(({ mediaType, role, schemaVersion }) => ({ mediaType, role, schemaVersion }));
-  const actualOutputs = receipt.outputs.map(({ mediaType, role, schemaVersion }) => ({ mediaType, role, schemaVersion }));
+  const contractOutput = ({ mediaType, role, schemaVersion }: NodeConfig["outputs"][number]) => ({
+    ...(mediaType == null ? {} : { mediaType }),
+    role,
+    schemaVersion,
+  });
+  const expectedOutputs = expected.outputs.map(contractOutput);
+  const actualOutputs = receipt.outputs.map(contractOutput);
   if (canonicalMetadataJson(actualOutputs) !== canonicalMetadataJson(expectedOutputs)) {
     throw new Error("receipt outputs do not match the planned node contract");
   }
@@ -259,6 +264,7 @@ export async function planReleaseWorkflow(
       identityDigests,
       inputs,
       nodeId: definition.id,
+      outputs: definition.config.outputs.map((output) => ({ ...output })),
       path: definition.path as ReleaseWorkflowPlan["nodes"][number]["path"],
       reason,
       ...(receipt == null ? {} : { receipt }),

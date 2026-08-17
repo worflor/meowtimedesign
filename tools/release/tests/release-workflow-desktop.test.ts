@@ -6,7 +6,9 @@ import { describe, expect, it } from "vitest";
 import { readIdentityRegistry } from "../src/identity/declaration/registry.ts";
 import {
   declareDesktopReleaseWorkflow,
+  createReleaseWorkflowRequestFromEnv,
   planReleaseWorkflow,
+  registerScenarioReceipts,
 } from "../src/workflow/index.ts";
 
 const workspaceRoot = resolve(import.meta.dirname, "../../..");
@@ -56,6 +58,34 @@ function request(workflowDigest: string, input: Readonly<{
 }
 
 describe("desktop ReleaseWorkflow", () => {
+  it("builds the three-target request from one closed environment contract", () => {
+    const prepared = createReleaseWorkflowRequestFromEnv({
+      env: {
+        GITHUB_ACTOR: "PerishCode",
+        GITHUB_EVENT_NAME: "workflow_dispatch",
+        GITHUB_REPOSITORY: "nexu-io/open-design",
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_RUN_ID: "123",
+        GITHUB_WORKFLOW: "release-beta",
+        RELEASE_ACTIVATE: "true",
+        RELEASE_CHANNEL: "beta",
+        RELEASE_COMMIT: "a".repeat(40),
+        RELEASE_MAC_ARM64_SIGN_MODE: "notarized",
+        RELEASE_MAC_X64_SIGN_MODE: "notarized",
+        RELEASE_MIN_SHELL_VERSION: "0.19.4-beta.31",
+        RELEASE_PROFILE: "test",
+        RELEASE_PUBLIC_ORIGIN: "https://releases.example.com",
+        RELEASE_PUBLISH: "true",
+        RELEASE_VERSION: "0.19.4-beta.31",
+        RELEASE_WIN_X64_SIGN_MODE: "unsigned",
+      },
+      workflowDigest: `sha256:${"a".repeat(64)}`,
+      workspaceRoot,
+    });
+    expect(prepared.targets.map(({ name }) => name)).toEqual(["mac_arm64", "mac_x64", "win_x64"]);
+    expect(prepared.targets.map(({ namespace }) => namespace)).toEqual(["release-beta", "release-beta-x64", "release-beta-win"]);
+  });
+
   it("seals the production graph against the repository identity registry", async () => {
     const sealed = declareDesktopReleaseWorkflow(await readIdentityRegistry(workspaceRoot));
     expect(sealed.manifest.workflow.id).toBe("open-design.desktop");
@@ -92,5 +122,22 @@ describe("desktop ReleaseWorkflow", () => {
     expect(stable.nodes.some(({ path }) => path === "atom.transact.activate")).toBe(false);
     expect(stable.nodes.some(({ path }) => path === "atom.build.shell")).toBe(true);
     expect(stable.nodes.some(({ path }) => path.startsWith("proof."))).toBe(true);
+
+    const receipts: unknown[] = [];
+    const scenarios = beta.nodes
+      .filter((node) => node.effect === "proof" && node.inputs.semantic.releaseTarget === "win_x64")
+      .map((node) => String(node.inputs.semantic.scenario));
+    const registered = await registerScenarioReceipts({
+      plan: beta,
+      registerReceipt: async (_storage, receipt) => {
+        receipts.push(receipt);
+        return "created";
+      },
+      storage: {} as never,
+      summary: { timings: scenarios.map((step) => ({ lane: "shell", status: "success", step })) },
+      target: "win_x64",
+    });
+    expect(registered).toHaveLength(5);
+    expect(receipts).toHaveLength(5);
   });
 });

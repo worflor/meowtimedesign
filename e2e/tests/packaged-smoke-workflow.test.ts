@@ -1958,7 +1958,7 @@ process.stdin.on("end", () => {
     expect(betaMacAction).toContain("RELEASE_OUTER_CACHE_MATCHED_KEY: ${{ steps.cache.outputs.cache-matched-key }}");
     expect(betaMacAction).toContain("pnpm exec tools-release write-reuse-plan");
     expect(betaWinAction).toContain(
-      "OD_PACKAGED_E2E_WIN_SMOKE_LANES: ${{ inputs.smoke-mode == 'full' && env.OD_RELEASE_EXACT_SMOKE_PROOF == 'hit' && 'standalone' || '' }}",
+      "OD_PACKAGED_E2E_WIN_SMOKE_LANES: ${{ inputs.smoke-mode == 'full' && ((inputs.workflow-plan-path != '' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF == 'hit')",
     );
 
     for (const action of [betaMacAction, betaWinAction]) {
@@ -2234,9 +2234,9 @@ process.stdin.on("end", () => {
     expect(manualDispatch).toContain("      promote:");
     expect(manualDispatch).toContain("        default: true");
     const buildJob = sectionBetween(betaWorkflow, "  build:", "  stage:");
-    expect(buildJob).toContain("target: mac_arm64");
-    expect(buildJob).toContain("target: mac_x64");
-    expect(buildJob).toContain("target: win_x64");
+    expect(buildJob).toContain("matrix: ${{ fromJSON(needs.metadata.outputs.build_matrix) }}");
+    expect(betaWorkflow).toContain("Compile canonical release workflow plan");
+    expect(betaWorkflow).toContain("Materialize replayed platform projections");
     expect(buildJob).toContain("id: mac");
     expect(buildJob).toContain("id: win");
     expect(buildJob).toContain("open-design-${{ inputs.exact_name }}-${{ matrix.target }}-build-result");
@@ -2951,12 +2951,11 @@ process.stdin.on("end", () => {
     expect(sharedClosureAction).toContain("RELEASE_CLOSURE_CONTRIBUTION_KIND: shared");
     expect(sharedClosureAction).toContain('cp -R "$blob_root"');
     expect(buildJob).toContain("OPEN_DESIGN_POSTINSTALL_LEVEL: release-smoke");
-    expect(buildJob).toContain("target: mac_arm64");
-    expect(buildJob).toContain("runner: macos-14");
-    expect(buildJob).toContain("target: mac_x64");
-    expect(buildJob).toContain("runner: macos-15-intel");
-    expect(buildJob).toContain("target: win_x64");
-    expect(buildJob).toContain("runner: windows-latest");
+    expect(buildJob).toContain("matrix: ${{ fromJSON(needs.metadata.outputs.build_matrix) }}");
+    expect(sharedJob).toContain("workflow execution --input");
+    expect(sharedJob).toContain("Upload replayed mac_arm64 publish manifest");
+    expect(sharedJob).toContain("Upload replayed mac_x64 publish manifest");
+    expect(sharedJob).toContain("Upload replayed win_x64 publish manifest");
     for (const targetAction of [targetMacAction, targetWinAction]) {
       expect(targetAction).toContain("tools-release resolve-closure-build");
       expect(targetAction).not.toMatch(/id: resolve\n\s+if:/u);
@@ -2977,6 +2976,8 @@ process.stdin.on("end", () => {
     expect(betaMacAction).toContain("tools-release merge-closure-distribution");
     expect(buildJob).toContain("needs.metadata.outputs.closure_version");
     expect(betaMacAction).toContain("OD_PACKAGED_E2E_CLOSURE_DISTRIBUTION_MANIFEST_PATH:");
+    expect(betaMacAction).toContain("OD_RELEASE_CANONICAL_SCENARIO_PROOF=miss");
+    expect(betaMacAction).toContain("workflow register-scenario-receipts");
     expect(betaMacAction).toContain("OD_PACKAGED_E2E_CLOSURE_BLOB_ROOTS_JSON:");
     expect(betaMacAction).toContain('RELEASE_CLOSURE_ENABLED: "false"');
     expect(betaMacAction).toContain('RELEASE_SHELL_ENABLED: "true"');
@@ -2992,6 +2993,8 @@ process.stdin.on("end", () => {
     expect(betaWinAction).toContain("tools-release merge-closure-distribution");
     expect(buildJob).toContain("closure-version: ${{ needs.metadata.outputs.closure_version }}");
     expect(betaWinAction).toContain("OD_PACKAGED_E2E_CLOSURE_DISTRIBUTION_MANIFEST_PATH:");
+    expect(betaWinAction).toContain("OD_RELEASE_CANONICAL_SCENARIO_PROOF=$state");
+    expect(betaWinAction).toContain("workflow register-scenario-receipts");
     expect(betaWinAction).toContain("$env:OD_PACKAGED_E2E_CLOSURE_BLOB_ROOTS_JSON = @(");
     expect(betaWinAction).toContain(") | ConvertTo-Json -Compress");
     expect(betaWinAction).toContain('RELEASE_CLOSURE_ENABLED: "false"');
@@ -3003,6 +3006,8 @@ process.stdin.on("end", () => {
     expect(stageJob).toContain('RELEASE_CLOSURE_DISTRIBUTION_REQUIRED: "true"');
     expect(stageJob).not.toContain("RELEASE_CLOSURE_REQUIRED:");
     expect(stageJob).toContain('RELEASE_SHELL_REQUIRED: "true"');
+    expect(stageJob).toContain("mac_arm64_result: success");
+    expect(stageJob).toContain("needs.build.result == 'skipped'");
     expect(workflow).not.toContain("/beta/closure/");
     expect(workflow).not.toContain("OD_PACKAGED_E2E_CLOSURE_BUILD_JSON_PATH:");
     expect(workflow).toContain("Validate checkout ref shape");

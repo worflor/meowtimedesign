@@ -45,6 +45,10 @@ inputs:
   update-target-version:
     description: Optional external updater target version
     required: true
+  workflow-plan-path:
+    description: Canonical workflow plan used to register scenario receipts
+    required: false
+    default: ""
 
 outputs:
   candidate_manifest_url:
@@ -69,6 +73,18 @@ runs:
         if (@("all", "prepare", "finish") -notcontains "${{ inputs.phase }}") {
           throw "unsupported exact Windows orchestration phase: ${{ inputs.phase }}"
         }
+    - name: Resolve win_x64 canonical scenario state
+      shell: pwsh
+      if: ${{ inputs.smoke-mode == 'full' && inputs.workflow-plan-path != '' }}
+      run: |
+        $plan = Get-Content -Raw "${{ inputs.workflow-plan-path }}" | ConvertFrom-Json
+        $miss = @($plan.nodes | Where-Object {
+          $_.effect -eq "proof" -and
+          $_.inputs.semantic.releaseTarget -eq "win_x64" -and
+          $_.decision -eq "execute"
+        }).Count -gt 0
+        $state = if ($miss) { "miss" } else { "hit" }
+        "OD_RELEASE_CANONICAL_SCENARIO_PROOF=$state" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
     - name: Setup release toolchain
       if: ${{ inputs.phase != 'finish' }}
       uses: ./.github/actions/release/platform/setup
@@ -128,7 +144,7 @@ runs:
         pnpm.cmd exec tools-release resolve-shell-build
         if ($LASTEXITCODE -ne 0) { throw "immutable Windows Shell resolution failed with exit code $LASTEXITCODE" }
     - name: Setup NSIS
-      if: ${{ inputs.phase != 'finish' && (steps.win_x64_shell_resolution.outputs.state == 'miss' || (inputs.smoke-mode == 'full' && steps.win_x64_shell_resolution.outputs.smoke_proof != 'hit' && inputs.update-metadata-url == '' && inputs.update-target-version == '')) }}
+      if: ${{ inputs.phase != 'finish' && (steps.win_x64_shell_resolution.outputs.state == 'miss' || (inputs.smoke-mode == 'full' && ((inputs.workflow-plan-path != '' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF != 'hit') || (inputs.workflow-plan-path == '' && steps.win_x64_shell_resolution.outputs.smoke_proof != 'hit')) && inputs.update-metadata-url == '' && inputs.update-target-version == '')) }}
       uses: ./.github/actions/release/platform/win/nsis
     - name: Build exact win_x64
       id: win_tools_pack_build
@@ -203,8 +219,8 @@ runs:
         RELEASE_OUTER_CACHE_MATCHED_KEY: ${{ steps.cache.outputs.cache-matched-key }}
         RELEASE_REUSE_PLAN_JSON_PATH: ${{ runner.temp }}\release-report\win_x64\reuse-plan.json
         RELEASE_SHELL_BUILD_STATE: ${{ steps.win_x64_shell_resolution.outputs.state }}
-        RELEASE_SMOKE_PROOF_STATE: ${{ steps.win_x64_shell_resolution.outputs.smoke_proof }}
-        RELEASE_SMOKE_SELECTED_LANES: ${{ inputs.smoke-mode == 'skip' && 'none' || (inputs.smoke-mode == 'full' && steps.win_x64_shell_resolution.outputs.smoke_proof == 'hit' && 'standalone' || 'profile-default') }}
+        RELEASE_SMOKE_PROOF_STATE: ${{ inputs.workflow-plan-path != '' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF || steps.win_x64_shell_resolution.outputs.smoke_proof }}
+        RELEASE_SMOKE_SELECTED_LANES: ${{ inputs.smoke-mode == 'skip' && 'none' || (inputs.smoke-mode == 'full' && ((inputs.workflow-plan-path != '' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF == 'hit') || (inputs.workflow-plan-path == '' && steps.win_x64_shell_resolution.outputs.smoke_proof == 'hit')) && 'standalone' || 'profile-default') }}
         RELEASE_TARGET: win_x64
       run: pnpm.cmd exec tools-release write-reuse-plan
     - name: Prepare win_x64 Standalone smoke graph
@@ -251,7 +267,7 @@ runs:
           "OD_RELEASE_EXACT_SMOKE_PROOF=${{ steps.win_x64_shell_resolution.outputs.smoke_proof }}"
         ) | Out-File -FilePath $env:GITHUB_ENV -Append
     - name: Build win_x64 exact update fixture
-      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode == 'full' && env.OD_RELEASE_EXACT_SMOKE_PROOF != 'hit' && inputs.update-metadata-url == '' && inputs.update-target-version == '' }}
+      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode == 'full' && ((inputs.workflow-plan-path != '' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF != 'hit') || (inputs.workflow-plan-path == '' && env.OD_RELEASE_EXACT_SMOKE_PROOF != 'hit')) && inputs.update-metadata-url == '' && inputs.update-target-version == '' }}
       shell: pwsh
       env:
         OD_TOOLS_PACK_WIN_NSIS_TEST_HOOKS: faults
@@ -268,7 +284,7 @@ runs:
         pnpm.cmd exec tools-pack win validate-payload --namespace "release-${{ inputs.channel }}-win" --payload-path $updateBuild.payloadPath --expected-version $updateVersion --json
     - name: Materialize legacy win_x64 migration fixture
       id: win_x64_legacy_fixture
-      if: ${{ inputs.phase != 'prepare' && inputs.channel == 'beta' && inputs.smoke-mode == 'full' && env.OD_RELEASE_EXACT_SMOKE_PROOF != 'hit' }}
+      if: ${{ inputs.phase != 'prepare' && inputs.channel == 'beta' && inputs.smoke-mode == 'full' && ((inputs.workflow-plan-path != '' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF != 'hit') || (inputs.workflow-plan-path == '' && env.OD_RELEASE_EXACT_SMOKE_PROOF != 'hit')) }}
       shell: pwsh
       env:
         RELEASE_PUBLIC_ORIGIN: ${{ inputs.release-public-origin != '' && inputs.release-public-origin || env.CLOUDFLARE_R2_RELEASES_PUBLIC_ORIGIN }}
@@ -302,7 +318,7 @@ runs:
         OD_PACKAGED_E2E_WIN_LEGACY_INSTALLER_PATH: ${{ steps.win_x64_legacy_fixture.outputs.installer_path }}
         OD_PACKAGED_E2E_WIN_LEGACY_VERSION: ${{ steps.win_x64_legacy_fixture.outputs.version }}
         OD_PACKAGED_E2E_WIN_MIN_SHELL_VERSION: ${{ env.CLOSURE_MIN_SHELL_VERSION }}
-        OD_PACKAGED_E2E_WIN_SMOKE_LANES: ${{ inputs.smoke-mode == 'full' && env.OD_RELEASE_EXACT_SMOKE_PROOF == 'hit' && 'standalone' || '' }}
+        OD_PACKAGED_E2E_WIN_SMOKE_LANES: ${{ inputs.smoke-mode == 'full' && ((inputs.workflow-plan-path != '' && env.OD_RELEASE_CANONICAL_SCENARIO_PROOF == 'hit') || (inputs.workflow-plan-path == '' && env.OD_RELEASE_EXACT_SMOKE_PROOF == 'hit')) && 'standalone' || '' }}
         OD_PACKAGED_E2E_WIN_SMOKE_PROFILE: ${{ inputs.smoke-mode }}
         OD_PACKAGED_E2E_WIN_UPDATE_FIXTURE: ${{ inputs.smoke-mode == 'full' && inputs.update-metadata-url == '' && inputs.update-target-version == '' && 'tools-serve' || '' }}
         OD_PACKAGED_E2E_WIN_UPDATE_METADATA_URL: ${{ inputs.update-metadata-url }}
@@ -338,6 +354,24 @@ runs:
         RELEASE_STORAGE_REGION: auto
         RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ env.CLOUDFLARE_R2_RELEASES_SK }}
       run: pnpm exec tools-release register-shell-smoke
+    - name: Register win_x64 canonical scenario receipts
+      shell: pwsh
+      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode == 'full' && inputs.workflow-plan-path != '' && steps.win_x64_smoke.outcome == 'success' }}
+      env:
+        RELEASE_STORAGE_ACCESS_KEY_ID: ${{ env.CLOUDFLARE_R2_RELEASES_AK }}
+        RELEASE_STORAGE_BUCKET: ${{ env.CLOUDFLARE_R2_RELEASES_BUCKET }}
+        RELEASE_STORAGE_ENDPOINT: ${{ env.CLOUDFLARE_R2_RELEASES_URL }}
+        RELEASE_STORAGE_REGION: auto
+        RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ env.CLOUDFLARE_R2_RELEASES_SK }}
+      run: |
+        $registration = Join-Path $env:RUNNER_TEMP "release-workflow\scenario-registration-win_x64.json"
+        $body = @{
+          plan = Get-Content -Raw "${{ inputs.workflow-plan-path }}" | ConvertFrom-Json
+          summary = Get-Content -Raw (Join-Path $env:RUNNER_TEMP "release-report\win_x64\summary.json") | ConvertFrom-Json
+          target = "win_x64"
+        } | ConvertTo-Json -Depth 100
+        Set-Content -Path $registration -Value $body -Encoding utf8
+        pnpm exec tools-release workflow register-scenario-receipts --input $registration
     - name: Write win_x64 release report
       shell: pwsh
       if: ${{ always() && (inputs.phase != 'prepare' || failure()) }}
@@ -358,6 +392,10 @@ runs:
       if: ${{ always() && (inputs.phase != 'prepare' || failure()) }}
       shell: pwsh
       run: Get-Content "${{ runner.temp }}\release-report\win_x64\summary.md" | Add-Content $env:GITHUB_STEP_SUMMARY
+    - name: Enforce win_x64 smoke result
+      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode != 'skip' && steps.win_x64_smoke.outcome != 'success' }}
+      shell: pwsh
+      run: throw "win_x64 packaged smoke failed"
     - name: Persist Windows tools-pack cache
       if: ${{ inputs.phase != 'prepare' && success() }}
       uses: ./.github/actions/release/platform/cache/save

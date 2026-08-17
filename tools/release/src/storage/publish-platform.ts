@@ -14,7 +14,7 @@ import {
   writeJson,
 } from "./common.ts";
 import { assertCurrentVersionReservation, versionLockObjectKey } from "./counted-version-reservation.ts";
-import { putImmutableStorageObject } from "./s3-upload.ts";
+import { copyStorageObject, putImmutableStorageObject } from "./s3-upload.ts";
 import {
   parseReleaseVersion,
   releaseChannelDescriptor,
@@ -45,6 +45,7 @@ type ShellBuildArtifact = {
 
 type ShellRemoteArtifact = AssetEntry & {
   objectKey: string;
+  sha512: string;
 };
 
 type ShellBuildReport = {
@@ -95,6 +96,7 @@ if (requestedVersionPrefix.length > 0 && requestedVersionPrefix !== versionPrefi
   throw new Error(`RELEASE_VERSION_PREFIX must be ${versionPrefix}; got ${requestedVersionPrefix}`);
 }
 const shellEnabled = bool("RELEASE_SHELL_ENABLED");
+const shellRemoteProjection = bool("RELEASE_SHELL_REMOTE_PROJECTION");
 const shellBuildJsonPath = optional("RELEASE_SHELL_BUILD_JSON_PATH");
 const latestPrefix = `${releaseChannel}/latest`;
 const reportRoot = optional("RELEASE_REPORT_DIR");
@@ -172,10 +174,18 @@ if (versionLockRequired) {
   console.log(`verified ${countedReleaseChannel} version reservation ${versionLockKey}`);
 }
 
-function assetEntry(name: string, prefix = artifactPrefix): AssetEntry {
+function assetEntry(name: string, kind: string, prefix = artifactPrefix): AssetEntry {
   const path = join(releaseAssetsDir, name);
   if (!existsSync(path) || !statSync(path).isFile()) {
-    throw new Error(`expected release asset not found: ${path}`);
+    const remote = shellRemoteProjection ? shellBuild?.resolution?.artifacts[kind] : null;
+    if (remote == null) throw new Error(`expected release asset not found: ${path}`);
+    return {
+      contentType: contentType(name),
+      digest: remote.digest,
+      name,
+      size: remote.size,
+      url: publicUrl(publicOrigin, prefix, name),
+    };
   }
   const entry: AssetEntry = {
     contentType: contentType(name),
@@ -288,16 +298,16 @@ function targetConfig(): TargetConfig {
     const dmg = `open-design-v${releaseVersion}-${arch}.dmg`;
     const zip = `open-design-${releaseVersion}${assetSuffix}-mac-${arch}.zip`;
     const artifactMode = optional("RELEASE_ARTIFACT_MODE", target === "mac_arm64" ? "dmg-only" : "dmg-and-zip");
-    const artifacts: Record<string, AssetEntry> = { dmg: assetEntry(dmg) };
+    const artifacts: Record<string, AssetEntry> = { dmg: assetEntry(dmg, "dmg") };
     const assetNames = [dmg, `${dmg}.sha256`];
     let feed = null;
     if (artifactMode === "dmg-and-payload" || artifactMode === "all") {
       const payload = `open-design-${releaseVersion}${assetSuffix}-mac-${arch}-payload.zip`;
-      artifacts.payload = assetEntry(payload);
+      artifacts.payload = assetEntry(payload, "payload");
       assetNames.push(payload, `${payload}.sha256`);
     }
     if (artifactMode === "dmg-and-zip" || artifactMode === "all") {
-      artifacts.zip = assetEntry(zip);
+      artifacts.zip = assetEntry(zip, "zip");
       assetNames.push(zip, `${zip}.sha256`, "latest-mac.yml");
       feed = {
         latestUrl: publicUrl(publicOrigin, latestPrefix, "latest-mac.yml"),
@@ -322,10 +332,10 @@ function targetConfig(): TargetConfig {
     const payload = `open-design-${releaseVersion}${assetSuffix}-win-x64-payload.7z`;
     const portableZip = `open-design-${releaseVersion}${assetSuffix}-win-x64-portable.zip`;
     const includeZip = optional("WIN_INCLUDE_ZIP", "true") !== "false";
-    const artifacts: Record<string, AssetEntry> = { installer: assetEntry(installer), payload: assetEntry(payload) };
+    const artifacts: Record<string, AssetEntry> = { installer: assetEntry(installer, "installer"), payload: assetEntry(payload, "payload") };
     const assetNames = [installer, `${installer}.sha256`, payload, `${payload}.sha256`, "latest.yml"];
     if (includeZip) {
-      artifacts.portableZip = assetEntry(portableZip);
+      artifacts.portableZip = assetEntry(portableZip, "portableZip");
       assetNames.push(portableZip, `${portableZip}.sha256`);
     }
     return {
@@ -368,6 +378,7 @@ if (shellBuild != null) {
         || typeof remote.contentType !== "string"
         || typeof remote.name !== "string"
         || typeof remote.objectKey !== "string"
+        || typeof remote.sha512 !== "string"
         || typeof remote.url !== "string"
       ) throw new Error(`Shell build resolution ${name} does not match prepared release asset`);
     }
@@ -391,8 +402,7 @@ function prepareResolvedShellFeed(): void {
   const prepared = preparedShellArtifacts[kind];
   const remote = config.artifacts[kind];
   if (prepared == null || remote == null) throw new Error(`resolved Shell updater feed requires ${kind}`);
-  const path = join(releaseAssetsDir, prepared.name);
-  const sha512 = createHash("sha512").update(readFileSync(path)).digest("base64");
+  const sha512 = shellBuild.resolution.artifacts[kind]!.sha512;
   const quoted = (value: string): string => JSON.stringify(value);
   writeFileSync(join(releaseAssetsDir, config.feed.name), [
     `version: ${quoted(shellBuild.shell.version)}`,
@@ -416,7 +426,22 @@ if (shellBuild == null) {
   for (const [kind, artifact] of Object.entries(config.artifacts)) {
     const built = shellBuild.artifacts[kind];
     if (built == null) throw new Error(`Shell build report is missing ${kind}`);
-    await uploadImmutable(built.path, `${artifactPrefix}/${artifact.name}`);
+    if (shellRemoteProjection) {
+      const remote = shellBuild.resolution?.artifacts[kind];
+      if (remote == null) throw new Error(`remote Shell projection is missing ${kind}`);
+      if (publishSideEffectsEnabled) {
+        if (storage == null) throw new Error("storage config is required for remote Shell projection");
+        await copyStorageObject({
+          ...storage,
+          cacheControl: "public, max-age=31536000, immutable",
+          contentType: artifact.contentType,
+          objectKey: `${artifactPrefix}/${artifact.name}`,
+          sourceObjectKey: remote.objectKey,
+        });
+      }
+    } else {
+      await uploadImmutable(built.path, `${artifactPrefix}/${artifact.name}`);
+    }
   }
   if (config.feed != null) {
     await uploadImmutable(

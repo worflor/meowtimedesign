@@ -79,6 +79,7 @@ export const releaseWorkflowReceiptOutputSchema = z.object({
   schemaVersion: z.number().int().positive().safe(),
   size: z.number().int().nonnegative().safe().optional(),
   url: z.string().url().optional(),
+  value: canonicalValueSchema.optional(),
 }).strict();
 
 export const releaseWorkflowReceiptSchema = z.object({
@@ -115,6 +116,11 @@ export const releaseWorkflowPlanNodeSchema = z.object({
     semantic: z.record(z.string(), canonicalValueSchema),
   }).strict(),
   nodeId: z.string().min(1),
+  outputs: z.array(z.object({
+    mediaType: z.string().min(1).optional(),
+    role: z.string().min(1),
+    schemaVersion: z.number().int().positive().safe(),
+  }).strict()).min(1),
   path: releaseWorkflowDefinitionPathSchema,
   reason: z.enum(["receipt-hit", "receipt-miss", "receipt-rejected", "side-effect-required"]),
   receipt: releaseWorkflowReceiptSchema.optional(),

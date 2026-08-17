@@ -141,6 +141,10 @@ jobs:
       release_name: ${{ steps.exact.outputs.release_name }}
       state_source: ${{ steps.reservation.outputs.state_source || steps.exact.outputs.state_source }}
       version_lock_key: ${{ steps.reservation.outputs.version_lock_key }}
+      build_matrix: ${{ steps.execution.outputs.build_matrix }}
+      mac_arm64_execution: ${{ steps.execution.outputs.mac_arm64_execution }}
+      mac_x64_execution: ${{ steps.execution.outputs.mac_x64_execution }}
+      win_x64_execution: ${{ steps.execution.outputs.win_x64_execution }}
     steps:
       - name: Validate checkout ref shape
         env:
@@ -336,19 +340,159 @@ jobs:
           publish-enabled: "true"
           release-version: ${{ steps.reservation.outputs.release_version || steps.exact.outputs.release_version }}
 
+      - name: Compile canonical release workflow plan
+        id: execution
+        env:
+          RELEASE_ACTIVATE: ${{ inputs.promote && 'true' || 'false' }}
+          RELEASE_CHANNEL: ${{ inputs.exact_name }}
+          RELEASE_COMMIT: ${{ env.BUILT_SHA }}
+          RELEASE_MIN_SHELL_VERSION: ${{ steps.exact.outputs.closure_min_shell_version }}
+          RELEASE_PROFILE: ${{ inputs.amr_profile || 'test' }}
+          RELEASE_PUBLIC_ORIGIN: ${{ env.RELEASE_PUBLIC_ORIGIN }}
+          RELEASE_PUBLISH: ${{ inputs.publish && 'true' || 'false' }}
+          RELEASE_STORAGE_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_RELEASES_AK }}
+          RELEASE_STORAGE_BUCKET: ${{ secrets.CLOUDFLARE_R2_RELEASES_BUCKET }}
+          RELEASE_STORAGE_ENDPOINT: ${{ secrets.CLOUDFLARE_R2_RELEASES_URL }}
+          RELEASE_STORAGE_REGION: auto
+          RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_RELEASES_SK }}
+          RELEASE_VERSION: ${{ steps.reservation.outputs.release_version || steps.exact.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          workflow_root="$RUNNER_TEMP/release-workflow"
+          mkdir -p "$workflow_root"
+          pnpm exec tools-release workflow request --output "$workflow_root/request.json"
+          pnpm exec tools-release workflow plan --input "$workflow_root/request.json" --output "$workflow_root/plan.json"
+          jq -n \
+            --slurpfile plan "$workflow_root/plan.json" \
+            --slurpfile request "$workflow_root/request.json" \
+            '{plan: $plan[0], request: $request[0]}' > "$workflow_root/execution-input.json"
+          pnpm exec tools-release workflow execution --input "$workflow_root/execution-input.json" --output "$workflow_root/execution.json"
+          build_matrix="$(jq -c '.buildMatrix' "$workflow_root/execution.json")"
+          echo "build_matrix=$build_matrix" >> "$GITHUB_OUTPUT"
+          for target in mac_arm64 mac_x64 win_x64; do
+            if jq -e --arg target "$target" '.replayTargets | index($target) != null' "$workflow_root/execution.json" >/dev/null; then
+              echo "${target}_execution=replay" >> "$GITHUB_OUTPUT"
+            else
+              echo "${target}_execution=execute" >> "$GITHUB_OUTPUT"
+            fi
+          done
+          {
+            echo "### Canonical workflow plan"
+            echo
+            echo '| Target | Decision |'
+            echo '| --- | --- |'
+            jq -r '.executeTargets[] | "| `\(.)` | execute |"' "$workflow_root/execution.json"
+            jq -r '.replayTargets[] | "| `\(.)` | replay |"' "$workflow_root/execution.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Materialize replayed platform projections
+        env:
+          RELEASE_STORAGE_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_RELEASES_AK }}
+          RELEASE_STORAGE_BUCKET: ${{ secrets.CLOUDFLARE_R2_RELEASES_BUCKET }}
+          RELEASE_STORAGE_ENDPOINT: ${{ secrets.CLOUDFLARE_R2_RELEASES_URL }}
+          RELEASE_STORAGE_REGION: auto
+          RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_RELEASES_SK }}
+        run: |
+          set -euo pipefail
+          workflow_root="$RUNNER_TEMP/release-workflow"
+          while IFS= read -r target; do
+            jq -n \
+              --arg candidateId "${{ steps.candidate.outputs.candidate_id }}" \
+              --arg outputRoot "$RUNNER_TEMP" \
+              --arg target "$target" \
+              --slurpfile plan "$workflow_root/plan.json" \
+              --slurpfile request "$workflow_root/request.json" \
+              '{candidateId: $candidateId, outputRoot: $outputRoot, plan: $plan[0], request: $request[0], target: $target}' \
+              > "$workflow_root/replay-$target.json"
+            pnpm exec tools-release workflow materialize-replay-target --input "$workflow_root/replay-$target.json"
+          done < <(jq -r '.replayTargets[]' "$workflow_root/execution.json")
+
+      - name: Upload canonical release workflow plan
+        uses: actions/upload-artifact@v7
+        with:
+          name: open-design-${{ inputs.exact_name }}-workflow-plan
+          path: ${{ runner.temp }}/release-workflow
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload replayed mac_arm64 publish manifest
+        if: ${{ steps.execution.outputs.mac_arm64_execution == 'replay' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: open-design-${{ inputs.exact_name }}-mac-arm64-publish-manifest
+          path: ${{ runner.temp }}/release-platform-manifests/mac_arm64.json
+          if-no-files-found: error
+
+      - name: Upload replayed mac_arm64 Standalone contribution
+        if: ${{ steps.execution.outputs.mac_arm64_execution == 'replay' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: open-design-${{ inputs.exact_name }}-closure-darwin-arm64
+          path: ${{ runner.temp }}/release-build/mac_arm64/target-contribution.json
+          if-no-files-found: error
+
+      - name: Upload replayed mac_arm64 build result
+        if: ${{ steps.execution.outputs.mac_arm64_execution == 'replay' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: open-design-${{ inputs.exact_name }}-mac_arm64-build-result
+          path: ${{ runner.temp }}/release-platform-results/mac_arm64.json
+          if-no-files-found: error
+
+      - name: Upload replayed mac_x64 publish manifest
+        if: ${{ steps.execution.outputs.mac_x64_execution == 'replay' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: open-design-${{ inputs.exact_name }}-mac-x64-publish-manifest
+          path: ${{ runner.temp }}/release-platform-manifests/mac_x64.json
+          if-no-files-found: error
+
+      - name: Upload replayed mac_x64 Standalone contribution
+        if: ${{ steps.execution.outputs.mac_x64_execution == 'replay' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: open-design-${{ inputs.exact_name }}-closure-darwin-x64
+          path: ${{ runner.temp }}/release-build/mac_x64/target-contribution.json
+          if-no-files-found: error
+
+      - name: Upload replayed mac_x64 build result
+        if: ${{ steps.execution.outputs.mac_x64_execution == 'replay' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: open-design-${{ inputs.exact_name }}-mac_x64-build-result
+          path: ${{ runner.temp }}/release-platform-results/mac_x64.json
+          if-no-files-found: error
+
+      - name: Upload replayed win_x64 publish manifest
+        if: ${{ steps.execution.outputs.win_x64_execution == 'replay' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: open-design-${{ inputs.exact_name }}-win-x64-publish-manifest
+          path: ${{ runner.temp }}/release-platform-manifests/win_x64.json
+          if-no-files-found: error
+
+      - name: Upload replayed win_x64 Standalone contribution
+        if: ${{ steps.execution.outputs.win_x64_execution == 'replay' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: open-design-${{ inputs.exact_name }}-closure-win32-x64
+          path: ${{ runner.temp }}/release-build/win_x64/target-contribution.json
+          if-no-files-found: error
+
+      - name: Upload replayed win_x64 build result
+        if: ${{ steps.execution.outputs.win_x64_execution == 'replay' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: open-design-${{ inputs.exact_name }}-win_x64-build-result
+          path: ${{ runner.temp }}/release-platform-results/win_x64.json
+          if-no-files-found: error
+
   build:
     name: Build exact ${{ matrix.target }}
     needs: metadata
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - target: mac_arm64
-            runner: macos-14
-          - target: mac_x64
-            runner: macos-15-intel
-          - target: win_x64
-            runner: windows-latest
+      matrix: ${{ fromJSON(needs.metadata.outputs.build_matrix) }}
     runs-on: ${{ matrix.runner }}
     env:
       CLOUDFLARE_R2_RELEASES_AK: ${{ secrets.CLOUDFLARE_R2_RELEASES_AK }}
@@ -368,6 +512,11 @@ jobs:
         uses: actions/checkout@v6.0.2
         with:
           ref: ${{ needs.metadata.outputs.commit }}
+      - name: Download canonical release workflow plan
+        uses: actions/download-artifact@v8
+        with:
+          name: open-design-${{ inputs.exact_name }}-workflow-plan
+          path: ${{ runner.temp }}/release-workflow
       - name: Resolve and materialize exact macOS ${{ matrix.target }}
         id: mac_prepare
         if: ${{ matrix.target != 'win_x64' }}
@@ -402,6 +551,7 @@ jobs:
           target: ${{ matrix.target }}
           update-metadata-url: ""
           update-target-version: ""
+          workflow-plan-path: ${{ runner.temp }}/release-workflow/plan.json
 
       - name: Smoke and publish exact macOS ${{ matrix.target }}
         id: mac_finish
@@ -431,6 +581,7 @@ jobs:
           target: ${{ matrix.target }}
           update-metadata-url: ""
           update-target-version: ""
+          workflow-plan-path: ${{ runner.temp }}/release-workflow/plan.json
 
       - name: Resolve and materialize exact win_x64
         id: win_prepare
@@ -451,6 +602,7 @@ jobs:
           build-target: all
           update-metadata-url: ""
           update-target-version: ""
+          workflow-plan-path: ${{ runner.temp }}/release-workflow/plan.json
 
       - name: Smoke and publish exact win_x64
         id: win_finish
@@ -471,6 +623,7 @@ jobs:
           build-target: all
           update-metadata-url: ""
           update-target-version: ""
+          workflow-plan-path: ${{ runner.temp }}/release-workflow/plan.json
 
       - name: Write ${{ matrix.target }} build result
         if: ${{ always() }}
@@ -504,7 +657,7 @@ jobs:
   candidate:
     name: Seal exact candidate
     needs: [metadata, build, stage]
-    if: ${{ !cancelled() && !inputs.promote && needs.metadata.result == 'success' && needs.build.result == 'success' && needs.stage.result == 'success' }}
+    if: ${{ !cancelled() && !inputs.promote && needs.metadata.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') && needs.stage.result == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       manifest_url: ${{ steps.finalize.outputs.candidate_manifest_url }}
@@ -564,7 +717,7 @@ jobs:
         always() &&
         !cancelled() &&
         needs.metadata.result == 'success' &&
-        needs.build.result == 'success'
+        (needs.build.result == 'success' || needs.build.result == 'skipped')
       }}
     runs-on: ubuntu-latest
     outputs:
@@ -691,9 +844,13 @@ jobs:
           enable_mac_arm64: true
           enable_mac_x64: true
           enable_win_x64: true
-          mac_arm64_result: ${{ needs.build.result }}
-          mac_x64_result: ${{ needs.build.result }}
-          win_x64_result: ${{ needs.build.result }}
+          # Replayed and runner-executed targets both reach this job only after
+          # their manifests/contributions/results exist. An empty dynamic matrix
+          # reports the build job as skipped, which is execution topology rather
+          # than a platform outcome.
+          mac_arm64_result: success
+          mac_x64_result: success
+          win_x64_result: success
         env:
           BASE_VERSION: ${{ needs.metadata.outputs.base_version }}
           RELEASE_ACTIVATE_LATEST: "false"

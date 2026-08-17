@@ -15,15 +15,31 @@ cli
     const { resolveReleaseIdentity, resolveReleaseWorkspaceRoot } = await import("./identity/resolution/resolve.ts");
     const {
       createReleaseWorkflowReceiptResolver,
+      createReleaseWorkflowRequestFromEnv,
+      candidateTargetProjectionInputSchema,
+      compileReleaseWorkflowExecution,
       declareDesktopReleaseWorkflow,
+      materializeReplayTarget,
       planReleaseWorkflow,
+      projectCandidateTargetFromShellReceipt,
+      registerScenarioReceipts,
       registerReleaseWorkflowReceipt,
+      releaseWorkflowExecutionInputSchema,
       releaseWorkflowRequestSchema,
+      replayTargetMaterializationInputSchema,
+      scenarioReceiptRegistrationInputSchema,
     } = await import("./workflow/index.ts");
     const workspaceRoot = resolveReleaseWorkspaceRoot(options.root);
+    const sealed = declareDesktopReleaseWorkflow(await readIdentityRegistry(workspaceRoot));
     if (action === "manifest") {
-      const sealed = declareDesktopReleaseWorkflow(await readIdentityRegistry(workspaceRoot));
       const body = `${JSON.stringify({ digest: sealed.digest, manifest: sealed.manifest }, null, 2)}\n`;
+      if (options.output == null) process.stdout.write(body);
+      else writeFileSync(resolve(options.output), body, "utf8");
+      return;
+    }
+    if (action === "request") {
+      const request = createReleaseWorkflowRequestFromEnv({ workflowDigest: sealed.digest, workspaceRoot });
+      const body = `${JSON.stringify(request, null, 2)}\n`;
       if (options.output == null) process.stdout.write(body);
       else writeFileSync(resolve(options.output), body, "utf8");
       return;
@@ -31,13 +47,78 @@ cli
     if (options.input == null) throw new Error(`workflow ${action} requires --input`);
     if (action === "plan") {
       const request = releaseWorkflowRequestSchema.parse(JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown);
-      const sealed = declareDesktopReleaseWorkflow(await readIdentityRegistry(workspaceRoot));
       const { storageConfigFromEnv } = await import("./storage/common.ts");
       const plan = await planReleaseWorkflow(sealed.manifest, request, {
         resolveIdentity: async ({ id, parameters }) => (await resolveReleaseIdentity({ id, parameters, workspaceRoot })).digest,
         resolveReceipt: createReleaseWorkflowReceiptResolver({ request, storage: storageConfigFromEnv() }),
       });
       const body = `${JSON.stringify(plan, null, 2)}\n`;
+      if (options.output == null) process.stdout.write(body);
+      else writeFileSync(resolve(options.output), body, "utf8");
+      return;
+    }
+    if (action === "execution") {
+      const input = releaseWorkflowExecutionInputSchema.parse(JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown);
+      const execution = compileReleaseWorkflowExecution(input.plan, input.request);
+      const body = `${JSON.stringify(execution, null, 2)}\n`;
+      if (options.output == null) process.stdout.write(body);
+      else writeFileSync(resolve(options.output), body, "utf8");
+      return;
+    }
+    if (action === "project-candidate-target") {
+      const projection = candidateTargetProjectionInputSchema.parse(JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown);
+      const { storageConfigFromEnv } = await import("./storage/common.ts");
+      const result = await projectCandidateTargetFromShellReceipt({
+        candidateId: projection.candidateId,
+        channel: projection.channel,
+        publicOrigin: projection.publicOrigin,
+        receipt: projection.receipt,
+        releaseVersion: projection.releaseVersion,
+        storage: storageConfigFromEnv(),
+        target: projection.target,
+      });
+      const body = `${JSON.stringify(result, null, 2)}\n`;
+      if (options.output == null) process.stdout.write(body);
+      else writeFileSync(resolve(options.output), body, "utf8");
+      return;
+    }
+    if (action === "materialize-replay-target") {
+      const projection = replayTargetMaterializationInputSchema.parse(JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown);
+      const { storageConfigFromEnv } = await import("./storage/common.ts");
+      const request = projection.request;
+      const targetName = projection.target;
+      const target = request.targets.find(({ name }) => name === targetName);
+      if (target == null) throw new Error(`release request does not select ${targetName}`);
+      const outputRoot = resolve(projection.outputRoot);
+      const result = await materializeReplayTarget({
+        candidateId: projection.candidateId,
+        outputRoot,
+        plan: projection.plan,
+        request,
+        storage: storageConfigFromEnv(),
+        target: targetName,
+      });
+      Object.assign(process.env, {
+        OPEN_DESIGN_AMR_PROFILE: request.release.profile,
+        RELEASE_ARTIFACT_MODE: targetName.startsWith("mac_") ? (target.buildTarget === "all" ? "all" : "dmg-and-payload") : "",
+        RELEASE_ASSET_SUFFIX: target.signMode === "unsigned" ? ".unsigned" : ".signed",
+        RELEASE_ASSETS_DIR: resolve(outputRoot, "release-assets", targetName),
+        RELEASE_CHANNEL: request.release.channel,
+        RELEASE_CLOSURE_ENABLED: "false",
+        RELEASE_MANIFEST_DIR: result.platformManifestDir,
+        RELEASE_OUTPUTS_PATH: result.platformOutputsPath,
+        RELEASE_PUBLIC_ORIGIN: request.release.publicOrigin,
+        RELEASE_PUBLISH_SIDE_EFFECTS: "true",
+        RELEASE_SHELL_BUILD_JSON_PATH: result.shellBuildPath,
+        RELEASE_SHELL_ENABLED: "true",
+        RELEASE_SHELL_REMOTE_PROJECTION: "true",
+        RELEASE_TARGET: targetName,
+        RELEASE_VERSION: request.release.releaseVersion,
+        RELEASE_VERSION_LOCK_REQUIRED: request.release.channel === "stable" ? "false" : "true",
+        WIN_INCLUDE_ZIP: target.buildTarget === "all" || target.buildTarget === "zip" ? "true" : "false",
+      });
+      await import("./storage/publish-platform.ts");
+      const body = `${JSON.stringify(result, null, 2)}\n`;
       if (options.output == null) process.stdout.write(body);
       else writeFileSync(resolve(options.output), body, "utf8");
       return;
@@ -51,7 +132,19 @@ cli
       process.stdout.write(`${state}\n`);
       return;
     }
-    throw new Error(`workflow action must be manifest, plan, or register-receipt; got ${action}`);
+    if (action === "register-scenario-receipts") {
+      const registration = scenarioReceiptRegistrationInputSchema.parse(JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown);
+      const { storageConfigFromEnv } = await import("./storage/common.ts");
+      const registered = await registerScenarioReceipts({
+        plan: registration.plan,
+        storage: storageConfigFromEnv(),
+        summary: registration.summary,
+        target: registration.target,
+      });
+      process.stdout.write(`${JSON.stringify(registered)}\n`);
+      return;
+    }
+    throw new Error(`unsupported workflow action: ${action}`);
   });
 
 cli

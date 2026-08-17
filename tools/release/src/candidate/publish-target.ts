@@ -6,8 +6,7 @@ import { contentType, normalizePublicUrl, optional, publicUrl, required, storage
 import { collectDogfoodCandidatePaths, parseDogfoodPathList, sanitizeDogfoodSegment } from "../storage/dogfood.ts";
 import { putImmutableStorageObject } from "../storage/s3-upload.ts";
 import { releaseCandidatePrefix, validateReleaseCandidateId } from "./identity.ts";
-
-export const RELEASE_CANDIDATE_CACHE_CONTROL = "public, max-age=2592000, immutable";
+import { RELEASE_CANDIDATE_CACHE_CONTROL } from "./policy.ts";
 
 type CandidateFile = Readonly<{
   digest: `sha256:${string}`;
