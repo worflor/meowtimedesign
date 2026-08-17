@@ -2961,6 +2961,7 @@ process.stdin.on("end", () => {
 
     expect(workflow).not.toContain("CLOSURE_MIN_SHELL_VERSION: ${{ inputs.exact_name == 'beta'");
     expect(sharedJob).toContain("closure_min_shell_version: ${{ steps.exact.outputs.closure_min_shell_version }}");
+    expect(sharedJob).toContain("closure_shared_identity_digest: ${{ steps.execution.outputs.shared_closure_digest }}");
     expect(sharedJob).toContain("min-shell-version: ${{ steps.exact.outputs.closure_min_shell_version }}");
     expect(buildJob).toContain("CLOSURE_MIN_SHELL_VERSION: ${{ needs.metadata.outputs.closure_min_shell_version }}");
     expect(workflow).toContain("OPEN_DESIGN_POSTINSTALL_CONCURRENCY: 2");
@@ -2994,6 +2995,7 @@ process.stdin.on("end", () => {
     expect(sharedClosureAction).toContain('cp -R "$blob_root"');
     expect(buildJob).toContain("OPEN_DESIGN_POSTINSTALL_LEVEL: release-smoke");
     expect(buildJob).toContain("matrix: ${{ fromJSON(needs.metadata.outputs.build_matrix) }}");
+    expect(buildJob).toContain("closure-shared-identity-digest: ${{ needs.metadata.outputs.closure_shared_identity_digest }}");
     expect(sharedJob).toContain('"resolve-release-identities"');
     expect(sharedJob).not.toContain("Upload replayed");
     for (const targetAction of [targetMacAction, targetWinAction]) {
@@ -3008,6 +3010,10 @@ process.stdin.on("end", () => {
       expect(targetAction).not.toContain("tools-release identity digest");
     }
     expect(betaMacAction).toContain("uses: ./.github/actions/release/closure/target/mac");
+    expect(betaMacAction).toContain("Resolve immutable shared Standalone contract");
+    expect(betaMacAction).toContain("RELEASE_CLOSURE_BUILD_DIGEST: ${{ inputs.closure-shared-identity-digest }}");
+    expect(betaMacAction).toContain("tools-release resolve-closure-build");
+    expect(betaMacAction).not.toContain("uses: actions/download-artifact");
     expect(betaMacAction).toContain("Resolve immutable ${{ inputs.target }} Electron Shell");
     expect(betaMacAction).toContain("tools-pack mac identity");
     expect(betaMacAction).toContain("tools-release resolve-shell-build");
@@ -3027,6 +3033,10 @@ process.stdin.on("end", () => {
     expect(betaMacAction).toContain("RELEASE_SHELL_BUILD_JSON_PATH:");
     expect(betaMacAction).toContain("RELEASE_CANDIDATE_BUILD_JSON_KEYS: dmgPath");
     expect(betaWinAction).toContain("uses: ./.github/actions/release/closure/target/win");
+    expect(betaWinAction).toContain("Resolve immutable shared Standalone contract");
+    expect(betaWinAction).toContain("RELEASE_CLOSURE_BUILD_DIGEST: ${{ inputs.closure-shared-identity-digest }}");
+    expect(betaWinAction).toContain("tools-release resolve-closure-build");
+    expect(betaWinAction).not.toContain("uses: actions/download-artifact");
     expect(betaWinAction).toContain("Resolve immutable win_x64 Electron Shell");
     expect(betaWinAction).toContain('"tools-pack", "win", "identity"');
     expect(betaWinAction).toContain("tools-release resolve-shell-build");

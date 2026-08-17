@@ -134,6 +134,7 @@ jobs:
       shell_version: ${{ steps.reservation.outputs.release_version || steps.exact.outputs.release_version }}
       closure_version: ${{ steps.reservation.outputs.release_version || steps.exact.outputs.release_version }}
       closure_min_shell_version: ${{ steps.exact.outputs.closure_min_shell_version }}
+      closure_shared_identity_digest: ${{ steps.execution.outputs.shared_closure_digest }}
       branch: ${{ steps.identity.outputs.branch }}
       commit: ${{ steps.identity.outputs.commit }}
       previous_commit: ${{ steps.prev.outputs.previous_commit }}
@@ -454,6 +455,7 @@ jobs:
           build-target: ${{ matrix.target == 'mac_arm64' && 'dmg' || 'all' }}
           candidate-id: ${{ needs.metadata.outputs.candidate_id }}
           closure-identity-digest: ${{ matrix.closure_identity_digest }}
+          closure-shared-identity-digest: ${{ needs.metadata.outputs.closure_shared_identity_digest }}
           closure-version: ${{ needs.metadata.outputs.closure_version }}
           candidate-enabled: "true"
           legacy-migration-enabled: ${{ matrix.target == 'mac_arm64' && inputs.exact_name == 'beta' && 'true' || 'false' }}
@@ -485,6 +487,7 @@ jobs:
           build-target: ${{ matrix.target == 'mac_arm64' && 'dmg' || 'all' }}
           candidate-id: ${{ needs.metadata.outputs.candidate_id }}
           closure-identity-digest: ${{ matrix.closure_identity_digest }}
+          closure-shared-identity-digest: ${{ needs.metadata.outputs.closure_shared_identity_digest }}
           closure-version: ${{ needs.metadata.outputs.closure_version }}
           candidate-enabled: "true"
           legacy-migration-enabled: ${{ matrix.target == 'mac_arm64' && inputs.exact_name == 'beta' && 'true' || 'false' }}
@@ -512,6 +515,7 @@ jobs:
           channel: ${{ inputs.exact_name }}
           candidate-id: ${{ needs.metadata.outputs.candidate_id }}
           closure-identity-digest: ${{ matrix.closure_identity_digest }}
+          closure-shared-identity-digest: ${{ needs.metadata.outputs.closure_shared_identity_digest }}
           release-version: ${{ needs.metadata.outputs.release_version }}
           closure-version: ${{ needs.metadata.outputs.closure_version }}
           shell-version: ${{ needs.metadata.outputs.shell_version }}
@@ -534,6 +538,7 @@ jobs:
           channel: ${{ inputs.exact_name }}
           candidate-id: ${{ needs.metadata.outputs.candidate_id }}
           closure-identity-digest: ${{ matrix.closure_identity_digest }}
+          closure-shared-identity-digest: ${{ needs.metadata.outputs.closure_shared_identity_digest }}
           release-version: ${{ needs.metadata.outputs.release_version }}
           closure-version: ${{ needs.metadata.outputs.closure_version }}
           shell-version: ${{ needs.metadata.outputs.shell_version }}

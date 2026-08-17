@@ -17,6 +17,9 @@ inputs:
   closure-identity-digest:
     description: Canonical Standalone Closure target identity digest
     required: true
+  closure-shared-identity-digest:
+    description: Canonical content identity digest for the shared Closure build
+    required: true
   shell-version:
     description: Reusable Electron Shell version
     required: true
@@ -91,12 +94,29 @@ runs:
       if: ${{ inputs.phase != 'finish' }}
       shell: pwsh
       run: pnpm install --frozen-lockfile
-    - name: Download shared Standalone contract
+    - name: Resolve immutable shared Standalone contract
       if: ${{ inputs.phase != 'finish' }}
-      uses: actions/download-artifact@v8
-      with:
-        name: open-design-${{ inputs.channel }}-closure-shared
-        path: ${{ runner.temp }}\release-closure\shared
+      shell: pwsh
+      env:
+        RELEASE_CHANNEL: ${{ inputs.channel }}
+        RELEASE_CLOSURE_BLOB_ROOT: ${{ runner.temp }}\release-closure\shared\blobs
+        RELEASE_CLOSURE_BUILD_DIGEST: ${{ inputs.closure-shared-identity-digest }}
+        RELEASE_CLOSURE_BUILD_KIND: shared
+        RELEASE_CLOSURE_BUILD_TOKEN: shared
+        RELEASE_CLOSURE_CONTRIBUTION_JSON_PATH: ${{ runner.temp }}\release-closure\shared\shared-contribution.json
+        RELEASE_PUBLIC_ORIGIN: ${{ inputs.release-public-origin != '' && inputs.release-public-origin || env.CLOUDFLARE_R2_RELEASES_PUBLIC_ORIGIN }}
+        RELEASE_STORAGE_ACCESS_KEY_ID: ${{ env.CLOUDFLARE_R2_RELEASES_AK }}
+        RELEASE_STORAGE_BUCKET: ${{ env.CLOUDFLARE_R2_RELEASES_BUCKET }}
+        RELEASE_STORAGE_ENDPOINT: ${{ env.CLOUDFLARE_R2_RELEASES_URL }}
+        RELEASE_STORAGE_REGION: auto
+        RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ env.CLOUDFLARE_R2_RELEASES_SK }}
+        RELEASE_VERSION: ${{ inputs.closure-version }}
+      run: |
+        $ErrorActionPreference = "Stop"
+        pnpm exec tools-release resolve-closure-build
+        if (-not (Test-Path -LiteralPath $env:RELEASE_CLOSURE_CONTRIBUTION_JSON_PATH -PathType Leaf)) {
+          throw "immutable shared Standalone contract did not resolve"
+        }
     - name: Resolve immutable win_x64 Electron Shell
       if: ${{ inputs.phase != 'finish' }}
       id: win_x64_shell_resolution
