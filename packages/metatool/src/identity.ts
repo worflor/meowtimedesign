@@ -39,7 +39,7 @@ export type ContentIdentityResult = Readonly<{
 
 export const CONTENT_IDENTITY_FORMAT_VERSION = 1 as const;
 
-function sha256(value: string | Uint8Array): `sha256:${string}` {
+export function metadataDigest(value: string | Uint8Array): `sha256:${string}` {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
@@ -47,19 +47,26 @@ function normalizePath(value: string): string {
   return value.split("\\").join("/").replace(/^\.\//u, "");
 }
 
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalize);
+export function canonicalizeMetadata(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeMetadata);
   if (value != null && typeof value === "object") {
+    const prototype = Object.getPrototypeOf(value) as unknown;
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new Error("canonical metadata can contain only plain objects");
+    }
     return Object.fromEntries(Object.entries(value as Record<string, unknown>)
       .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => [key, canonicalize(entry)]));
+      .map(([key, entry]) => [key, canonicalizeMetadata(entry)]));
   }
-  if (value === undefined) throw new Error("content identity parameters cannot contain undefined");
-  return value;
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    throw new Error("canonical metadata cannot contain non-finite numbers");
+  }
+  if (value === null || typeof value === "boolean" || typeof value === "number" || typeof value === "string") return value;
+  throw new Error(`canonical metadata cannot contain ${typeof value}`);
 }
 
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(canonicalize(value));
+export function canonicalMetadataJson(value: unknown): string {
+  return JSON.stringify(canonicalizeMetadata(value));
 }
 
 function assertRelativeRepoPath(value: string, label: string): string {
@@ -84,7 +91,7 @@ async function normalizedFileBody(path: string, source: ContentIdentitySource): 
     try {
       const parsed = JSON.parse(body.toString("utf8")) as Record<string, unknown>;
       delete parsed.version;
-      body = Buffer.from(`${canonicalJson(parsed)}\n`, "utf8");
+      body = Buffer.from(`${canonicalMetadataJson(parsed)}\n`, "utf8");
     } catch {
       // The owning build will report malformed JSON. Identity remains byte-exact.
     }
@@ -125,7 +132,7 @@ async function inspectSource(root: string, source: ContentIdentitySource): Promi
     if (!metadata.isFile()) throw new Error(`unsupported identity input kind: ${relativePath}`);
     const body = await normalizedFileBody(absolutePath, source);
     const mode = (metadata.mode & 0o111) === 0 ? 0o644 : 0o755;
-    entries.push({ digest: sha256(body), kind: "file", mode, path: relativePath, size: body.byteLength });
+    entries.push({ digest: metadataDigest(body), kind: "file", mode, path: relativePath, size: body.byteLength });
   }
 
   await visit(absoluteSource, sourcePath);
@@ -144,8 +151,8 @@ export async function resolveContentIdentity(input: ContentIdentityInput): Promi
     .sort((left, right) => left.path.localeCompare(right.path) || left.kind.localeCompare(right.kind));
   const duplicate = entries.find((entry, index) => index > 0 && entries[index - 1]?.path === entry.path);
   if (duplicate != null) throw new Error(`content identity ${input.id} contains duplicate path: ${duplicate.path}`);
-  const parameters = canonicalize(input.parameters ?? {}) as Readonly<Record<string, unknown>>;
-  const digest = sha256(canonicalJson({
+  const parameters = canonicalizeMetadata(input.parameters ?? {}) as Readonly<Record<string, unknown>>;
+  const digest = metadataDigest(canonicalMetadataJson({
     entries,
     formatVersion: CONTENT_IDENTITY_FORMAT_VERSION,
     id: input.id,
