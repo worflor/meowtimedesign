@@ -58,6 +58,14 @@ describe("release identity registry", () => {
     expect(win.sources.map(({ path }) => path)).not.toContain("e2e/specs/mac");
   });
 
+  it("resolves scenario identities without overlapping inherited source files", async () => {
+    const parameters = { matrix: "scenario", standaloneProtocolVersion: 1 };
+    await expect(Promise.all([
+      resolveReleaseIdentity({ id: "shell.spec.mac_arm64.legacy-migration", parameters, workspaceRoot }),
+      resolveReleaseIdentity({ id: "shell.spec.win_x64.legacy-migration", parameters, workspaceRoot }),
+    ])).resolves.toHaveLength(2);
+  });
+
   it("covers Closure runtime dependencies while isolating platform packagers", async () => {
     const registry = await readIdentityRegistry(workspaceRoot);
     const shared = resolveIdentityDeclaration(registry, "closure.shared.build");

@@ -84,7 +84,6 @@
       "inherits": ["shell.spec.shared"],
       "paths": [
         ".github/actions/release/platform/mac/exact/action.yml",
-        "e2e/lib/vitest/packaged-smoke-plan-mac.ts",
         "e2e/specs/mac/lib"
       ]
     },
@@ -108,7 +107,6 @@
       "inherits": ["shell.spec.shared"],
       "paths": [
         ".github/actions/release/platform/win/exact/action.yml",
-        "e2e/lib/vitest/packaged-smoke-plan-win.ts",
         "e2e/specs/win/lib"
       ]
     },
