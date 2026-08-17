@@ -9,8 +9,11 @@ import {
 } from "@open-design/sidecar/control";
 import {
   STANDALONE_HANDOFF_SCHEMA_VERSION,
+  STANDALONE_RUNTIME_COMMANDS,
+  validateStandalonePrepareUpdateCommandInput,
   validateStandaloneHandoffRequest,
   validateStandaloneRuntimeCommandRequest,
+  validateStandaloneUpdatePreparation,
   type StandaloneHandle,
   type StandaloneHandoffRequest,
   type StandaloneRuntimeFailedStatus,
@@ -50,11 +53,6 @@ type ShellCapabilityBridgeMethods = {
 };
 
 export const STANDALONE_SHELL_CAPABILITY_SERVICE = "shell" as const;
-
-export const OPEN_DESIGN_REGISTER_DESKTOP_AUTH_COMMAND =
-  "open-design.register-desktop-auth.v1" as const;
-export const OPEN_DESIGN_PREPARE_UPDATE_COMMAND =
-  "open-design.prepare-update.v1" as const;
 
 export type StandaloneSidecarLaunchSpec = Readonly<{
   args?: readonly string[];
@@ -285,18 +283,9 @@ export async function startSidecarStandalone(
       const command = validateStandaloneRuntimeCommandRequest(value, {
         handoff: request.handoff,
       });
-      if (command.command === OPEN_DESIGN_PREPARE_UPDATE_COMMAND) {
-        if (command.input == null || typeof command.input !== "object" || Array.isArray(command.input)) {
-          return {
-            attachmentId: command.attachmentId,
-            error: { code: "standalone-update-unavailable" },
-            handoff: request.handoff,
-            outcome: "failed",
-            requestId: command.requestId,
-            schemaVersion: STANDALONE_HANDOFF_SCHEMA_VERSION,
-          };
-        }
-        if (!hasModernClosureUpdateMetadata(command.input.metadata)) {
+      if (command.command === STANDALONE_RUNTIME_COMMANDS.PREPARE_UPDATE) {
+        const input = validateStandalonePrepareUpdateCommandInput(command.input);
+        if (!hasModernClosureUpdateMetadata(input.metadata)) {
           return {
             attachmentId: command.attachmentId,
             handoff: request.handoff,
@@ -317,21 +306,17 @@ export async function startSidecarStandalone(
           };
         }
         try {
-          const output = await prepareStandaloneUpdate({
-            activationPolicy: command.input.activationSource === "silent-policy"
-              ? "authorize-silent"
-              : command.input.activationSource === "user-restart"
-                ? "authorize-user"
-                : "revoke-silent",
+          const output = validateStandaloneUpdatePreparation(await prepareStandaloneUpdate({
+            activationPolicy: input.activationPolicy,
             channel: request.handoff.scope.channel,
-            metadata: command.input.metadata,
+            metadata: input.metadata,
             namespace: request.handoff.scope.namespace,
             repositoryConfigPath: request.closure.repositoryConfigPath,
             shellType: request.attachment.shell.type,
             shellVersion: request.attachment.shell.version,
             storeRoot: request.closure.storeRoot,
             target: request.closure.target,
-          });
+          }));
           return {
             attachmentId: command.attachmentId,
             handoff: request.handoff,
@@ -351,7 +336,7 @@ export async function startSidecarStandalone(
           };
         }
       }
-      if (command.command !== OPEN_DESIGN_REGISTER_DESKTOP_AUTH_COMMAND) {
+      if (command.command !== STANDALONE_RUNTIME_COMMANDS.REGISTER_DESKTOP_AUTH) {
         return {
           attachmentId: command.attachmentId,
           handoff: request.handoff,

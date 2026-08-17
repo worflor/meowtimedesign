@@ -4,9 +4,11 @@ import {
   STANDALONE_BOOTLOADER_ENTRY_PATH,
   STANDALONE_HANDOFF_SCHEMA_VERSION,
   STANDALONE_PROTOCOL_VERSION,
+  STANDALONE_RUNTIME_COMMANDS,
   STANDALONE_SHELL_CAPABILITIES,
   STANDALONE_UPDATER_SCHEMA_VERSION,
   compareStandaloneVersions,
+  createStandalonePrepareUpdateCommandInput,
   createStandaloneHandoffEnvelope,
   validateStandaloneBootstrapDescriptor,
   validateStandaloneBootstrapProgress,
@@ -19,9 +21,11 @@ import {
   validateStandaloneRuntimeStatus,
   validateStandaloneRuntimeCommandRequest,
   validateStandaloneRuntimeCommandResult,
+  validateStandalonePrepareUpdateCommandInput,
   validateStandaloneShellCapabilityResult,
   validateStandaloneShellCapabilityInput,
   validateStandaloneShellCapabilityOutput,
+  validateStandaloneUpdatePreparation,
   validateStandaloneUpdaterActionRequest,
   validateStandaloneUpdaterActionResult,
   validateStandaloneUpdaterProviderDescriptor,
@@ -366,6 +370,41 @@ describe("Standalone bootloader protocol", () => {
       handoff,
       requestId: command.requestId,
     })).toThrow(/requestId/);
+  });
+
+  it("owns one immutable v2 prepare-update dialect for both Shell and Standalone", () => {
+    expect(STANDALONE_RUNTIME_COMMANDS.PREPARE_UPDATE).toBe("open-design.prepare-update.v2");
+    expect(createStandalonePrepareUpdateCommandInput(
+      { channel: "beta", closure: { schemaVersion: 4 } },
+      "authorize-user",
+    )).toEqual({
+      activationPolicy: "authorize-user",
+      metadata: { channel: "beta", closure: { schemaVersion: 4 } },
+    });
+    expect(() => validateStandalonePrepareUpdateCommandInput({
+      activationPolicy: "authorize-user",
+      activationSource: "user-restart",
+      metadata: {},
+    })).toThrow(/unsupported fields/u);
+    expect(() => validateStandalonePrepareUpdateCommandInput({
+      activationPolicy: "future-policy",
+      metadata: {},
+    })).toThrow(/activation policy/u);
+
+    expect(validateStandaloneUpdatePreparation({
+      activationSource: "user-restart",
+      architecture: "standalone",
+      releaseVersion: "0.19.4-beta.38",
+      route: "closure",
+      state: "prepared",
+    })).toMatchObject({ activationSource: "user-restart", state: "prepared" });
+    expect(() => validateStandaloneUpdatePreparation({
+      activateOnRestart: true,
+      architecture: "standalone",
+      releaseVersion: "0.19.4-beta.38",
+      route: "closure",
+      state: "prepared",
+    })).toThrow(/unsupported fields/u);
   });
 });
 

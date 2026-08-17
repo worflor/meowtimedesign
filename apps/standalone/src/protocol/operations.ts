@@ -3,6 +3,7 @@ import { isAbsolute, posix, win32 } from "node:path";
 
 import {
   STANDALONE_HANDOFF_SCHEMA_VERSION,
+  STANDALONE_UPDATE_ACTIVATION_POLICIES,
   STANDALONE_UPDATER_SCHEMA_VERSION,
   StandaloneHandoffEnvelope,
   StandaloneProtocolJsonValue,
@@ -21,6 +22,9 @@ import {
   StandaloneUpdaterActionRequest,
   StandaloneUpdaterActionResult,
   StandaloneProtocolError,
+  StandalonePrepareUpdateCommandInput,
+  StandaloneUpdateActivationPolicy,
+  StandaloneUpdatePreparation,
 } from "./index.js";
 import {
   requireRecord,
@@ -71,6 +75,84 @@ function validateRuntimeCommandExchange(
     throw new StandaloneProtocolError("standalone runtime command requestId does not match");
   }
   return { attachmentId, handoff, requestId, schemaVersion: STANDALONE_HANDOFF_SCHEMA_VERSION };
+}
+
+export function validateStandalonePrepareUpdateCommandInput(
+  value: unknown,
+): StandalonePrepareUpdateCommandInput {
+  const input = requireRecord(value, "standalone prepare-update command input");
+  requireKnownKeys(input, ["activationPolicy", "metadata"], "standalone prepare-update command input");
+  const activationPolicy = input.activationPolicy;
+  if (!Object.values(STANDALONE_UPDATE_ACTIVATION_POLICIES).includes(
+    activationPolicy as StandaloneUpdateActivationPolicy,
+  )) {
+    throw new StandaloneProtocolError("unsupported standalone update activation policy");
+  }
+  const metadata = requireRecord(input.metadata, "standalone prepare-update metadata");
+  return Object.freeze({
+    activationPolicy: activationPolicy as StandaloneUpdateActivationPolicy,
+    metadata: Object.freeze(
+      normalizeJsonValue(metadata, "standalone prepare-update metadata") as Record<string, StandaloneProtocolJsonValue>,
+    ),
+  });
+}
+
+export function createStandalonePrepareUpdateCommandInput(
+  metadata: Record<string, unknown>,
+  activationPolicy: StandaloneUpdateActivationPolicy,
+): StandalonePrepareUpdateCommandInput {
+  return validateStandalonePrepareUpdateCommandInput({ activationPolicy, metadata });
+}
+
+export function validateStandaloneUpdatePreparation(value: unknown): StandaloneUpdatePreparation {
+  const output = requireRecord(value, "standalone update preparation");
+  if (output.architecture === "legacy") {
+    requireKnownKeys(output, ["architecture"], "legacy standalone update preparation");
+    return Object.freeze({ architecture: "legacy" });
+  }
+  if (output.architecture !== "standalone") {
+    throw new StandaloneProtocolError("unsupported standalone update preparation architecture");
+  }
+  if (output.route === "shell") {
+    requireKnownKeys(
+      output,
+      ["architecture", "minimumShellVersion", "route"],
+      "Shell standalone update preparation",
+    );
+    if (output.minimumShellVersion !== null && typeof output.minimumShellVersion !== "string") {
+      throw new StandaloneProtocolError("standalone update minimum Shell version must be a string or null");
+    }
+    return Object.freeze({
+      architecture: "standalone",
+      minimumShellVersion: output.minimumShellVersion,
+      route: "shell",
+    });
+  }
+  if (output.route !== "closure") {
+    throw new StandaloneProtocolError("unsupported standalone update preparation route");
+  }
+  requireKnownKeys(
+    output,
+    ["activationSource", "architecture", "releaseVersion", "route", "state"],
+    "Closure standalone update preparation",
+  );
+  if (
+    output.activationSource !== null
+    && output.activationSource !== "silent-policy"
+    && output.activationSource !== "user-restart"
+  ) {
+    throw new StandaloneProtocolError("unsupported standalone update activation source");
+  }
+  if (output.state !== "current" && output.state !== "prepared") {
+    throw new StandaloneProtocolError("unsupported standalone update preparation state");
+  }
+  return Object.freeze({
+    activationSource: output.activationSource,
+    architecture: "standalone",
+    releaseVersion: normalizeVersion(output.releaseVersion, "standalone update release version"),
+    route: "closure",
+    state: output.state,
+  });
 }
 
 export function validateStandaloneShellCapabilityRequest(

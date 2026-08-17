@@ -7,11 +7,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   STANDALONE_HANDOFF_SCHEMA_VERSION,
   STANDALONE_PROTOCOL_VERSION,
+  STANDALONE_RUNTIME_COMMANDS,
   createStandaloneHandoffEnvelope,
   type StandaloneHandoffRequest,
 } from "@open-design/standalone/protocol";
 import { startSidecarStandalone } from "../../../apps/standalone/src/sidecars.js";
-import { OPEN_DESIGN_REGISTER_DESKTOP_AUTH_COMMAND } from "../../../apps/standalone/src/sidecars.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -103,7 +103,7 @@ describe("Standalone normalized product sidecars", () => {
 
     await expect(handle.invoke({
       attachmentId: "electron-e2e",
-      command: OPEN_DESIGN_REGISTER_DESKTOP_AUTH_COMMAND,
+      command: STANDALONE_RUNTIME_COMMANDS.REGISTER_DESKTOP_AUTH,
       handoff,
       input: { secret: "dGVzdC1kZXNrdG9wLWF1dGg=" },
       requestId: "desktop-auth-1",
@@ -114,6 +114,36 @@ describe("Standalone normalized product sidecars", () => {
     });
     await expect(readFile(join(root, "data", "desktop-auth-secret.txt"), "utf8"))
       .resolves.toBe("dGVzdC1kZXNrdG9wLWF1dGg=");
+
+    await expect(handle.invoke({
+      attachmentId: "electron-e2e",
+      command: STANDALONE_RUNTIME_COMMANDS.PREPARE_UPDATE,
+      handoff,
+      input: {
+        activationPolicy: "authorize-silent",
+        metadata: { channel: "beta" },
+      },
+      requestId: "prepare-update-v2",
+      schemaVersion: STANDALONE_HANDOFF_SCHEMA_VERSION,
+    })).resolves.toMatchObject({
+      outcome: "completed",
+      output: { architecture: "legacy" },
+      requestId: "prepare-update-v2",
+    });
+    await expect(handle.invoke({
+      attachmentId: "electron-e2e",
+      command: "open-design.prepare-update.v1",
+      handoff,
+      input: {
+        activationPolicy: "authorize-silent",
+        metadata: { channel: "beta" },
+      },
+      requestId: "prepare-update-v1",
+      schemaVersion: STANDALONE_HANDOFF_SCHEMA_VERSION,
+    })).resolves.toMatchObject({
+      outcome: "unsupported",
+      requestId: "prepare-update-v1",
+    });
 
     await expect(handle.close()).resolves.toMatchObject({ handoff, state: "stopped" });
     await expect(handle.waitForTerminal()).resolves.toMatchObject({ state: "stopped" });

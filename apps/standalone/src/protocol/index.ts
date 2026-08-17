@@ -172,6 +172,37 @@ export type StandaloneProtocolJsonValue =
   | StandaloneProtocolJsonValue[]
   | { [key: string]: StandaloneProtocolJsonValue };
 
+export const STANDALONE_RUNTIME_COMMANDS = Object.freeze({
+  PREPARE_UPDATE: "open-design.prepare-update.v2",
+  REGISTER_DESKTOP_AUTH: "open-design.register-desktop-auth.v1",
+} as const);
+
+export const STANDALONE_UPDATE_ACTIVATION_POLICIES = Object.freeze({
+  AUTHORIZE_SILENT: "authorize-silent",
+  AUTHORIZE_USER: "authorize-user",
+  REVOKE_SILENT: "revoke-silent",
+} as const);
+
+export type StandaloneUpdateActivationPolicy =
+  (typeof STANDALONE_UPDATE_ACTIVATION_POLICIES)[keyof typeof STANDALONE_UPDATE_ACTIVATION_POLICIES];
+
+export type StandalonePrepareUpdateCommandInput = Readonly<{
+  activationPolicy: StandaloneUpdateActivationPolicy;
+  metadata: Readonly<Record<string, StandaloneProtocolJsonValue>>;
+}>;
+
+export type StandaloneUpdatePreparation = Readonly<
+  | { architecture: "legacy" }
+  | { architecture: "standalone"; minimumShellVersion: string | null; route: "shell" }
+  | {
+      activationSource: "silent-policy" | "user-restart" | null;
+      architecture: "standalone";
+      releaseVersion: string;
+      route: "closure";
+      state: "current" | "prepared";
+    }
+>;
+
 export type StandaloneResourceEnsureRequest = Readonly<{ id: string }>;
 
 export type StandalonePreparedResource = Readonly<{

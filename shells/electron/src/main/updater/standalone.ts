@@ -1,4 +1,4 @@
-import type { StandaloneUpdateActivationPolicy } from "@open-design/standalone";
+import type { StandaloneUpdateActivationPolicy } from "@open-design/standalone/protocol";
 
 import { hasStandaloneDistributionMetadata } from "./feed.js";
 

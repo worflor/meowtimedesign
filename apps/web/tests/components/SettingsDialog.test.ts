@@ -134,6 +134,31 @@ describe('SettingsDialog about update control', () => {
     });
   });
 
+  it('offers the canonical restart action when Standalone is prepared even if Shell reports not-available', () => {
+    const control = deriveAboutUpdateControl(
+      deriveUpdaterModel(
+        updateStatus({
+          standalone: {
+            activationSource: null,
+            releaseVersion: '1.2.3-beta.9',
+            state: 'prepared',
+          },
+          state: 'not-available',
+        }),
+        { hostAvailable: true },
+      ),
+      packagedVersion,
+    );
+
+    expect(control).toMatchObject({
+      primaryAction: 'install',
+      primaryLabelKey: 'updater.installRestart',
+      statusKey: 'settings.updateStatusReady',
+      statusTone: 'success',
+      statusVars: { version: '1.2.3-beta.9' },
+    });
+  });
+
   it('offers download when an update is available', () => {
     const control = deriveAboutUpdateControl(
       deriveUpdaterModel(

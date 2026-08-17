@@ -1,28 +1,20 @@
 import { randomUUID } from "node:crypto";
 
-import type { StandaloneUpdateActivationPolicy } from "@open-design/standalone";
 import {
   STANDALONE_HANDOFF_SCHEMA_VERSION,
+  STANDALONE_RUNTIME_COMMANDS,
+  createStandalonePrepareUpdateCommandInput,
+  validateStandaloneUpdatePreparation,
   type StandaloneHandle,
   type StandaloneHandoffEnvelope,
-  type StandaloneProtocolJsonValue,
+  type StandaloneUpdateActivationPolicy,
+  type StandaloneUpdatePreparation,
 } from "@open-design/standalone/protocol";
 
 export const OPEN_DESIGN_REGISTER_DESKTOP_AUTH_COMMAND =
-  "open-design.register-desktop-auth.v1" as const;
+  STANDALONE_RUNTIME_COMMANDS.REGISTER_DESKTOP_AUTH;
 export const OPEN_DESIGN_PREPARE_UPDATE_COMMAND =
-  "open-design.prepare-update.v1" as const;
-
-export type StandaloneUpdatePreparation =
-  | { architecture: "legacy" }
-  | { architecture: "standalone"; minimumShellVersion: string | null; route: "shell" }
-  | {
-      activationSource: "silent-policy" | "user-restart" | null;
-      architecture: "standalone";
-      releaseVersion: string;
-      route: "closure";
-      state: "current" | "prepared";
-    };
+  STANDALONE_RUNTIME_COMMANDS.PREPARE_UPDATE;
 
 /** Shell-side adapter for the product command; transport stays behind StandaloneHandle. */
 export function createStandaloneDesktopAuthRegistration(input: Readonly<{
@@ -65,44 +57,13 @@ export function createStandaloneUpdatePreparation(input: Readonly<{
       attachmentId: input.attachmentId,
       command: OPEN_DESIGN_PREPARE_UPDATE_COMMAND,
       handoff: input.handoff,
-      input: {
-        ...(options.activationPolicy === "authorize-silent"
-          ? { activationSource: "silent-policy" }
-          : options.activationPolicy === "authorize-user"
-            ? { activationSource: "user-restart" }
-            : {}),
-        metadata,
-      } as StandaloneProtocolJsonValue,
+      input: createStandalonePrepareUpdateCommandInput(metadata, options.activationPolicy),
       requestId: requestId(),
       schemaVersion: STANDALONE_HANDOFF_SCHEMA_VERSION,
     });
-    if (result.outcome !== "completed" || result.output == null || typeof result.output !== "object" || Array.isArray(result.output)) {
+    if (result.outcome !== "completed") {
       throw new Error("Standalone update preparation failed");
     }
-    const output = result.output as Record<string, unknown>;
-    if (output.architecture === "legacy") return { architecture: "legacy" };
-    if (output.architecture !== "standalone" || (output.route !== "shell" && output.route !== "closure")) {
-      throw new Error("Standalone update preparation returned an invalid route");
-    }
-    if (output.route === "shell") {
-      return {
-        architecture: "standalone",
-        minimumShellVersion: typeof output.minimumShellVersion === "string" ? output.minimumShellVersion : null,
-        route: "shell",
-      };
-    }
-    if (
-      typeof output.releaseVersion !== "string"
-      || (output.state !== "current" && output.state !== "prepared")
-    ) throw new Error("Standalone update preparation returned an invalid Closure state");
-    return {
-      architecture: "standalone",
-      activationSource: output.activationSource === "silent-policy" || output.activationSource === "user-restart"
-        ? output.activationSource
-        : null,
-      releaseVersion: output.releaseVersion,
-      route: "closure",
-      state: output.state,
-    };
+    return validateStandaloneUpdatePreparation(result.output);
   };
 }

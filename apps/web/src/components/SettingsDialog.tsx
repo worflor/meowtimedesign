@@ -325,6 +325,19 @@ export function deriveAboutUpdateControl(
     };
   }
 
+  if (model.standaloneReady) {
+    return {
+      primaryAction: 'install',
+      primaryLabelKey: 'updater.installRestart',
+      showReleaseLink: true,
+      statusKey: model.availableVersion
+        ? 'settings.updateStatusReady'
+        : 'settings.updateStatusReadyUnknown',
+      statusTone: 'success',
+      ...(model.availableVersion ? { statusVars: { version: model.availableVersion } } : {}),
+    };
+  }
+
   switch (model.status?.state) {
     case 'checking':
       return {

@@ -11,26 +11,13 @@ import {
   resolveClosureShellMinimumVersion,
   selectClosureDistributionReleaseCandidate,
 } from "@open-design/closure/update";
+import type {
+  StandaloneUpdateActivationPolicy,
+  StandaloneUpdatePreparation,
+} from "./protocol/index.js";
 
 import { discardUnreferencedClosureResources } from "./resource-garbage.js";
 import { ensureStandaloneBootResources } from "./resource-runtime.js";
-
-export type StandaloneUpdatePreparation = Readonly<
-  | { architecture: "legacy" }
-  | { architecture: "standalone"; minimumShellVersion: string | null; route: "shell" }
-  | {
-      activationSource: "silent-policy" | "user-restart" | null;
-      architecture: "standalone";
-      releaseVersion: string;
-      route: "closure";
-      state: "current" | "prepared";
-    }
->;
-
-export type StandaloneUpdateActivationPolicy =
-  | "authorize-silent"
-  | "authorize-user"
-  | "revoke-silent";
 
 /**
  * The sole legacy discriminator is absence of the modern Closure envelope.

@@ -25,7 +25,7 @@ import {
   type SidecarStamp,
   type WebStatusSnapshot,
 } from "@open-design/sidecar/protocol";
-import type { StandaloneUpdateActivationPolicy } from "@open-design/standalone";
+import type { StandaloneUpdateActivationPolicy } from "@open-design/standalone/protocol";
 import type { StandaloneLifecyclePort, StandaloneRuntimeStatus } from "@open-design/standalone/protocol";
 import type { DesktopStandaloneUpdatePreparation } from "./updater.js";
 import { dirname, join } from "node:path";
