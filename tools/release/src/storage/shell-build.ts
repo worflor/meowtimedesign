@@ -30,6 +30,7 @@ export type ShellBuildPlan = {
   artifacts: Record<string, string | null>;
   outputRoot: string;
   profile: Record<string, unknown>;
+  profileDigest: Digest;
   releaseVersion: string | null;
   runtimeNamespaceRoot: string;
   schemaVersion: 4;
@@ -241,6 +242,7 @@ export function validateShellBuildPlan(value: unknown, channel: ReleaseChannel):
   assertRecord(value.shell, "Shell build plan shell");
   assertRecord(value.artifacts, "Shell build plan artifacts");
   assertRecord(value.profile, "Shell build plan profile");
+  validateDigest(value.profileDigest, "Shell build plan profileDigest");
   validateDigest(value.shell.buildDigest, "Shell build plan buildDigest");
   validateDigest(value.shell.capabilityDigest, "Shell build plan capabilityDigest");
   validateDigest(value.shell.carrierDigest, "Shell build plan carrierDigest");
@@ -312,12 +314,12 @@ export function validateShellBuildRecord(
 }
 
 export async function resolveShellReleaseDigest(
-  plan: Pick<ShellBuildPlan, "profile" | "target">,
+  plan: Pick<ShellBuildPlan, "profileDigest" | "target">,
   workspaceRoot = resolveReleaseWorkspaceRoot(),
 ): Promise<Digest> {
   return (await resolveReleaseIdentity({
     id: `shell.build.${plan.target}`,
-    parameters: { profile: plan.profile, target: plan.target },
+    parameters: { profileDigest: plan.profileDigest, target: plan.target },
     workspaceRoot,
   })).digest;
 }

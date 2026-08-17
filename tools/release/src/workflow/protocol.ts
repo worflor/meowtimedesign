@@ -23,6 +23,7 @@ export const releaseWorkflowTargetRequestSchema = z.object({
   nodeNapi: z.string().min(1),
   platform: platformSchema,
   signMode: z.string().min(1),
+  shellProfileDigest: digestSchema,
   smokeMatrix: tokenSchema,
   standaloneProtocolVersion: z.number().int().positive().safe(),
 }).strict();

@@ -345,6 +345,9 @@ jobs:
       - name: Compile canonical release workflow plan
         id: execution
         env:
+          APPLE_SIGNING_CERTIFICATE_BASE64: ${{ secrets.APPLE_SIGNING_CERTIFICATE_BASE64 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          OD_UPDATE_METADATA_URL: ${{ inputs.release_public_origin != '' && inputs.release_public_origin || vars.CLOUDFLARE_R2_RELEASES_PUBLIC_ORIGIN }}/${{ inputs.exact_name }}/latest/metadata.json
           RELEASE_ACTIVATE: ${{ inputs.promote && 'true' || 'false' }}
           RELEASE_CHANNEL: ${{ inputs.exact_name }}
           RELEASE_COMMIT: ${{ env.BUILT_SHA }}
@@ -361,7 +364,47 @@ jobs:
         run: |
           set -euo pipefail
           workflow_root="$RUNNER_TEMP/release-workflow"
-          mkdir -p "$workflow_root"
+          profile_root="$RUNNER_TEMP/release-workflow-profiles"
+          mkdir -p "$workflow_root" "$profile_root"
+          shell_version="${{ steps.reservation.outputs.release_version || steps.exact.outputs.release_version }}"
+          pnpm exec tools-pack mac identity \
+            --dir "$profile_root/mac-arm64" \
+            --cache-dir "$profile_root/cache-mac-arm64" \
+            --namespace "release-${{ inputs.exact_name }}" \
+            --portable \
+            --release-version "$shell_version" \
+            --shell-version "$shell_version" \
+            --mac-compression normal \
+            --to dmg \
+            --sign-mode notarized \
+            --json > "$profile_root/mac-arm64.json"
+          pnpm exec tools-pack mac identity \
+            --dir "$profile_root/mac-x64" \
+            --cache-dir "$profile_root/cache-mac-x64" \
+            --namespace "release-${{ inputs.exact_name }}-x64" \
+            --portable \
+            --release-version "$shell_version" \
+            --shell-version "$shell_version" \
+            --mac-compression normal \
+            --to all \
+            --sign-mode notarized \
+            --json > "$profile_root/mac-x64.json"
+          pnpm exec tools-pack win identity \
+            --dir "$profile_root/win-x64" \
+            --cache-dir "$profile_root/cache-win-x64" \
+            --namespace "release-${{ inputs.exact_name }}-win" \
+            --portable \
+            --release-version "$shell_version" \
+            --shell-version "$shell_version" \
+            --to all \
+            --sign-mode unsigned \
+            --json > "$profile_root/win-x64.json"
+          RELEASE_MAC_ARM64_SHELL_PROFILE_DIGEST="$(jq -er '.profileDigest' "$profile_root/mac-arm64.json")"
+          RELEASE_MAC_X64_SHELL_PROFILE_DIGEST="$(jq -er '.profileDigest' "$profile_root/mac-x64.json")"
+          RELEASE_WIN_X64_SHELL_PROFILE_DIGEST="$(jq -er '.profileDigest' "$profile_root/win-x64.json")"
+          export RELEASE_MAC_ARM64_SHELL_PROFILE_DIGEST
+          export RELEASE_MAC_X64_SHELL_PROFILE_DIGEST
+          export RELEASE_WIN_X64_SHELL_PROFILE_DIGEST
           pnpm exec tools-release workflow request --output "$workflow_root/request.json"
           pnpm exec tools-release workflow plan --input "$workflow_root/request.json" --output "$workflow_root/plan.json"
           jq -n \

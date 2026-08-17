@@ -25,7 +25,7 @@ type ScenarioDefinition = Readonly<{
 }>;
 
 const request = (path: "release.channel" | "release.commit" | "release.minShellVersion" | "release.namespace" | "release.nodeVersion" | "release.packageManager" | "release.profile" | "release.publicOrigin" | "release.releaseVersion") => ({ path, source: "request" } as const);
-const target = (name: TargetName, path: "target.buildTarget" | "target.namespace" | "target.nodeModulesAbi" | "target.nodeNapi" | "target.platform" | "target.signMode" | "target.smokeMatrix" | "target.standaloneProtocolVersion") => ({ path, source: "target", target: name } as const);
+const target = (name: TargetName, path: "target.buildTarget" | "target.namespace" | "target.nodeModulesAbi" | "target.nodeNapi" | "target.platform" | "target.signMode" | "target.shellProfileDigest" | "target.smokeMatrix" | "target.standaloneProtocolVersion") => ({ path, source: "target", target: name } as const);
 const literal = (value: string | number | boolean) => ({ source: "literal", value } as const);
 
 const sharedBoundaries = {
@@ -246,7 +246,7 @@ export function declareDesktopReleaseWorkflow(identities: IdentityRegistry): Sea
       bindings: {
         buildTarget: target(definition.target, "target.buildTarget"),
         channel: request("release.channel"),
-        profile: request("release.profile"),
+        profileDigest: target(definition.target, "target.shellProfileDigest"),
         shellType: literal("electron"),
         signMode: target(definition.target, "target.signMode"),
         target: target(definition.target, "target.platform"),
@@ -254,8 +254,8 @@ export function declareDesktopReleaseWorkflow(identities: IdentityRegistry): Sea
       confidence: "certain",
       executor,
       id: `shell-${definition.target.replace("_", "-")}`,
-      identity: { ids: [definition.identity], parameters: ["profile", "target"] },
-      inputs: { semantic: ["buildTarget", "channel", "profile", "shellType", "signMode", "target"] },
+      identity: { ids: [definition.identity], parameters: ["profileDigest", "target"] },
+      inputs: { semantic: ["buildTarget", "channel", "profileDigest", "shellType", "signMode", "target"] },
       outputs: [{ mediaType: "application/json", role: "shellBuild", schemaVersion: 5 }],
       schemaVersion: 1,
       witness: "shell-build-record/v5",

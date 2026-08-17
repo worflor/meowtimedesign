@@ -12,7 +12,7 @@ it("anchors runtime release identity to cwd rather than the bundled module locat
 const sourcePath = (...segments: string[]): string => segments.join("/");
 
 describe("release identity registry", () => {
-  it("owns Shell artifact identity without consuming tools-pack process-cache mechanics", async () => {
+  it("owns Shell artifact sources while consuming only tools-pack's canonical profile digest", async () => {
     const registry = await readIdentityRegistry(workspaceRoot);
     const mac = resolveIdentityDeclaration(registry, "shell.build.darwin-arm64");
     const paths = mac.sources.map(({ path }) => path);
@@ -30,22 +30,16 @@ describe("release identity registry", () => {
     expect(mac.sources.every(({ normalizePackageVersion }) => normalizePackageVersion === true)).toBe(true);
 
     const base = {
-      profile: { channel: "beta", namespace: "release-beta", signing: { enabled: false } },
+      profileDigest: `sha256:${"a".repeat(64)}`,
       target: "darwin-arm64",
     };
     const first = await resolveReleaseIdentity({ id: "shell.build.darwin-arm64", parameters: base, workspaceRoot });
     const changed = await resolveReleaseIdentity({
       id: "shell.build.darwin-arm64",
-      parameters: { ...base, profile: { ...base.profile, namespace: "release-stable" } },
+      parameters: { ...base, profileDigest: `sha256:${"b".repeat(64)}` },
       workspaceRoot,
     });
     expect(changed.digest).not.toBe(first.digest);
-    const changedChannel = await resolveReleaseIdentity({
-      id: "shell.build.darwin-arm64",
-      parameters: { ...base, profile: { ...base.profile, channel: "stable" } },
-      workspaceRoot,
-    });
-    expect(changedChannel.digest).not.toBe(first.digest);
   });
 
   it("expands complete platform specs without leaking the opposite platform", async () => {

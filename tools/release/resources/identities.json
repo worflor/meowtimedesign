@@ -195,17 +195,17 @@
     "shell.build.darwin-arm64": {
       "schemaVersion": 1,
       "sourceSets": ["shell.build.mac"],
-      "parameters": ["profile", "target"]
+      "parameters": ["profileDigest", "target"]
     },
     "shell.build.darwin-x64": {
       "schemaVersion": 1,
       "sourceSets": ["shell.build.mac"],
-      "parameters": ["profile", "target"]
+      "parameters": ["profileDigest", "target"]
     },
     "shell.build.win32-x64": {
       "schemaVersion": 1,
       "sourceSets": ["shell.build.win"],
-      "parameters": ["profile", "target"]
+      "parameters": ["profileDigest", "target"]
     },
     "shell.spec.mac_arm64": {
       "schemaVersion": 1,

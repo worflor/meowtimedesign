@@ -11,7 +11,7 @@ const request = {
     commit: "a".repeat(40),
     minShellVersion: "0.19.4-beta.1",
     namespace: "release-beta",
-    nodeVersion: "24.18.0",
+    nodeVersion: "v24.18.0",
     packageManager: "pnpm@10.33.2",
     profile: "test",
     publicOrigin: "https://releases.example.com",
@@ -19,9 +19,9 @@ const request = {
     releaseVersion: "0.19.4-beta.31",
   },
   targets: [
-    { buildTarget: "dmg", name: "mac_arm64", namespace: "release-beta", nodeModulesAbi: "137", nodeNapi: "10", platform: "darwin-arm64", signMode: "notarized", smokeMatrix: "mac-shell-v3", standaloneProtocolVersion: 1 },
-    { buildTarget: "all", name: "mac_x64", namespace: "release-beta-x64", nodeModulesAbi: "137", nodeNapi: "10", platform: "darwin-x64", signMode: "notarized", smokeMatrix: "mac-shell-v2", standaloneProtocolVersion: 1 },
-    { buildTarget: "all", name: "win_x64", namespace: "release-beta-win", nodeModulesAbi: "137", nodeNapi: "10", platform: "win32-x64", signMode: "unsigned", smokeMatrix: "win-shell-v2", standaloneProtocolVersion: 1 },
+    { buildTarget: "dmg", name: "mac_arm64", namespace: "release-beta", nodeModulesAbi: "137", nodeNapi: "10", platform: "darwin-arm64", signMode: "notarized", shellProfileDigest: `sha256:${"a".repeat(64)}`, smokeMatrix: "mac-shell-v3", standaloneProtocolVersion: 1 },
+    { buildTarget: "all", name: "mac_x64", namespace: "release-beta-x64", nodeModulesAbi: "137", nodeNapi: "10", platform: "darwin-x64", signMode: "notarized", shellProfileDigest: `sha256:${"b".repeat(64)}`, smokeMatrix: "mac-shell-v2", standaloneProtocolVersion: 1 },
+    { buildTarget: "all", name: "win_x64", namespace: "release-beta-win", nodeModulesAbi: "137", nodeNapi: "10", platform: "win32-x64", signMode: "unsigned", shellProfileDigest: `sha256:${"c".repeat(64)}`, smokeMatrix: "win-shell-v2", standaloneProtocolVersion: 1 },
   ],
   workflowDigest: `sha256:${"1".repeat(64)}`,
 } as const;

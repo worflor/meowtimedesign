@@ -60,6 +60,7 @@ export const RELEASE_WORKFLOW_TARGET_INPUT_PATHS = [
   "target.nodeNapi",
   "target.platform",
   "target.signMode",
+  "target.shellProfileDigest",
   "target.smokeMatrix",
   "target.standaloneProtocolVersion",
 ] as const;

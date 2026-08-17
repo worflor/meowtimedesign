@@ -350,14 +350,14 @@ describe("public Windows release acceptance", () => {
         commit,
         minShellVersion: releaseVersion,
         namespace: "release-beta",
-        nodeVersion: "24.18.0",
+        nodeVersion: "v24.18.0",
         packageManager: "pnpm@10.33.2",
         profile: "test",
         publicOrigin,
         publish: true,
         releaseVersion,
       },
-      targets: [{ buildTarget: "all", name: "win_x64", namespace, nodeModulesAbi: "137", nodeNapi: "10", platform: "win32-x64", signMode: "unsigned", smokeMatrix: "win-shell-v2", standaloneProtocolVersion: 1 }],
+      targets: [{ buildTarget: "all", name: "win_x64", namespace, nodeModulesAbi: "137", nodeNapi: "10", platform: "win32-x64", signMode: "unsigned", shellProfileDigest: d("9"), smokeMatrix: "win-shell-v2", standaloneProtocolVersion: 1 }],
       workflowDigest: d("1"),
     };
     const receipt = {

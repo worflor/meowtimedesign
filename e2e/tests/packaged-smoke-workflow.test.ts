@@ -2230,6 +2230,10 @@ process.stdin.on("end", () => {
     expect(metadataJob).toContain("branch: ${{ steps.identity.outputs.branch }}");
     expect(metadataJob).toContain("commit: ${{ steps.identity.outputs.commit }}");
     expect(metadataJob).toContain("promote: ${{ inputs.promote }}");
+    expect(metadataJob).toContain('profile_root="$RUNNER_TEMP/release-workflow-profiles"');
+    expect(metadataJob).toContain('--json > "$profile_root/mac-arm64.json"');
+    expect(metadataJob).toContain('--json > "$profile_root/win-x64.json"');
+    expect(metadataJob).not.toContain('--json > "$workflow_root/profile-');
     const manualDispatch = sectionBetween(betaWorkflow, "  workflow_dispatch:", "  workflow_call:");
     expect(manualDispatch).toContain("      promote:");
     expect(manualDispatch).toContain("        default: true");

@@ -4,6 +4,8 @@ import { canonicalMetadataJson, metadataDigest } from "@open-design/metatool";
 import { describe, expect, it } from "vitest";
 
 import { readIdentityRegistry } from "../src/identity/declaration/registry.ts";
+import { resolveReleaseIdentity } from "../src/identity/resolution/resolve.ts";
+import { resolveShellReleaseDigest } from "../src/storage/shell-build.ts";
 import {
   declareDesktopReleaseWorkflow,
   createReleaseWorkflowRequestFromEnv,
@@ -35,7 +37,7 @@ function request(workflowDigest: string, input: Readonly<{
       commit: "a".repeat(40),
       minShellVersion: input.releaseVersion,
       namespace: `release-${input.channel}`,
-      nodeVersion: "24.18.0",
+      nodeVersion: "v24.18.0",
       packageManager: "pnpm@10.33.2",
       profile: "test",
       publicOrigin: "https://releases.example.com",
@@ -50,6 +52,7 @@ function request(workflowDigest: string, input: Readonly<{
       nodeNapi: "10",
       platform: "win32-x64",
       signMode: "unsigned",
+      shellProfileDigest: `sha256:${"d".repeat(64)}`,
       smokeMatrix: "win-shell-v2",
       standaloneProtocolVersion: 1,
     }],
@@ -71,19 +74,28 @@ describe("desktop ReleaseWorkflow", () => {
         RELEASE_CHANNEL: "beta",
         RELEASE_COMMIT: "a".repeat(40),
         RELEASE_MAC_ARM64_SIGN_MODE: "notarized",
+        RELEASE_MAC_ARM64_SHELL_PROFILE_DIGEST: `sha256:${"b".repeat(64)}`,
         RELEASE_MAC_X64_SIGN_MODE: "notarized",
+        RELEASE_MAC_X64_SHELL_PROFILE_DIGEST: `sha256:${"c".repeat(64)}`,
         RELEASE_MIN_SHELL_VERSION: "0.19.4-beta.31",
         RELEASE_PROFILE: "test",
         RELEASE_PUBLIC_ORIGIN: "https://releases.example.com",
         RELEASE_PUBLISH: "true",
         RELEASE_VERSION: "0.19.4-beta.31",
         RELEASE_WIN_X64_SIGN_MODE: "unsigned",
+        RELEASE_WIN_X64_SHELL_PROFILE_DIGEST: `sha256:${"d".repeat(64)}`,
       },
       workflowDigest: `sha256:${"a".repeat(64)}`,
       workspaceRoot,
     });
     expect(prepared.targets.map(({ name }) => name)).toEqual(["mac_arm64", "mac_x64", "win_x64"]);
     expect(prepared.targets.map(({ namespace }) => namespace)).toEqual(["release-beta", "release-beta-x64", "release-beta-win"]);
+    expect(prepared.release.nodeVersion).toBe(process.version);
+    expect(prepared.targets.map(({ shellProfileDigest }) => shellProfileDigest)).toEqual([
+      `sha256:${"b".repeat(64)}`,
+      `sha256:${"c".repeat(64)}`,
+      `sha256:${"d".repeat(64)}`,
+    ]);
   });
 
   it("seals the production graph against the repository identity registry", async () => {
@@ -94,6 +106,25 @@ describe("desktop ReleaseWorkflow", () => {
     if (desktop?.path !== "release.desktop") throw new Error("desktop release declaration is missing");
     expect(desktop.config.targets).toEqual(["mac_arm64", "mac_x64", "win_x64"]);
     expect(sealed.canonical).not.toContain("linux");
+  });
+
+  it("uses the exact Shell identity interpreted by build storage", async () => {
+    const sealed = declareDesktopReleaseWorkflow(await readIdentityRegistry(workspaceRoot));
+    const prepared = request(sealed.digest);
+    const planned = await planReleaseWorkflow(sealed.manifest, prepared, {
+      now: () => new Date("2026-08-17T08:00:00.000Z"),
+      resolveIdentity: async ({ id, parameters }: { id: string; parameters: Record<string, unknown> }) => (
+        await resolveReleaseIdentity({ id, parameters, workspaceRoot })
+      ).digest,
+      resolveReceipt: async () => null,
+    });
+    const shell = planned.nodes.find(({ path }) => path === "atom.build.shell");
+    if (shell == null) throw new Error("Shell build node is missing");
+    const target = prepared.targets[0]!;
+    await expect(resolveShellReleaseDigest({
+      profileDigest: target.shellProfileDigest as `sha256:${string}`,
+      target: target.platform as "darwin-arm64" | "darwin-x64" | "win32-x64",
+    }, workspaceRoot)).resolves.toBe(shell.identityDigests[`shell.build.${target.platform}`]);
   });
 
   it("selects only requested target nodes and applies stable publish=false gates", async () => {
