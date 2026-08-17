@@ -80,6 +80,58 @@
         "tools/pack/tests/fixtures/win/nsis"
       ]
     },
+    "shell.spec.mac.scenario-base": {
+      "inherits": ["shell.spec.shared"],
+      "paths": [
+        ".github/actions/release/platform/mac/exact/action.yml",
+        "e2e/lib/vitest/packaged-smoke-plan-mac.ts",
+        "e2e/specs/mac/lib"
+      ]
+    },
+    "shell.spec.mac.lifecycle": {
+      "inherits": ["shell.spec.mac.scenario-base"],
+      "paths": ["e2e/specs/mac/shell-lifecycle.spec.ts"]
+    },
+    "shell.spec.mac.silent-update": {
+      "inherits": ["shell.spec.mac.scenario-base"],
+      "paths": ["e2e/specs/mac/shell-silent-update.spec.ts"]
+    },
+    "shell.spec.mac.rollback": {
+      "inherits": ["shell.spec.mac.scenario-base"],
+      "paths": ["e2e/specs/mac/shell-rollback.spec.ts"]
+    },
+    "shell.spec.mac.legacy-migration": {
+      "inherits": ["shell.spec.mac.scenario-base"],
+      "paths": ["e2e/specs/mac/legacy-migration.spec.ts"]
+    },
+    "shell.spec.win.scenario-base": {
+      "inherits": ["shell.spec.shared"],
+      "paths": [
+        ".github/actions/release/platform/win/exact/action.yml",
+        "e2e/lib/vitest/packaged-smoke-plan-win.ts",
+        "e2e/specs/win/lib"
+      ]
+    },
+    "shell.spec.win.lifecycle": {
+      "inherits": ["shell.spec.win.scenario-base"],
+      "paths": ["e2e/specs/win/shell-lifecycle.spec.ts"]
+    },
+    "shell.spec.win.silent-update": {
+      "inherits": ["shell.spec.win.scenario-base"],
+      "paths": ["e2e/specs/win/shell-silent-update.spec.ts"]
+    },
+    "shell.spec.win.rollback": {
+      "inherits": ["shell.spec.win.scenario-base"],
+      "paths": ["e2e/specs/win/shell-rollback.spec.ts"]
+    },
+    "shell.spec.win.native-install": {
+      "inherits": ["shell.spec.win.scenario-base"],
+      "paths": ["e2e/specs/win/native-install.spec.ts"]
+    },
+    "shell.spec.win.legacy-migration": {
+      "inherits": ["shell.spec.win.scenario-base"],
+      "paths": ["e2e/specs/win/legacy-migration.spec.ts"]
+    },
     "closure.build.shared": {
       "normalizePackageVersion": true,
       "paths": [
@@ -170,6 +222,66 @@
     "shell.spec.win_x64": {
       "schemaVersion": 1,
       "sourceSets": ["shell.spec.win"],
+      "parameters": ["matrix", "standaloneProtocolVersion"]
+    },
+    "shell.spec.mac_arm64.lifecycle": {
+      "schemaVersion": 1,
+      "sourceSets": ["shell.spec.mac.lifecycle"],
+      "parameters": ["matrix", "standaloneProtocolVersion"]
+    },
+    "shell.spec.mac_arm64.silent-update": {
+      "schemaVersion": 1,
+      "sourceSets": ["shell.spec.mac.silent-update"],
+      "parameters": ["matrix", "standaloneProtocolVersion"]
+    },
+    "shell.spec.mac_arm64.rollback": {
+      "schemaVersion": 1,
+      "sourceSets": ["shell.spec.mac.rollback"],
+      "parameters": ["matrix", "standaloneProtocolVersion"]
+    },
+    "shell.spec.mac_arm64.legacy-migration": {
+      "schemaVersion": 1,
+      "sourceSets": ["shell.spec.mac.legacy-migration"],
+      "parameters": ["matrix", "standaloneProtocolVersion"]
+    },
+    "shell.spec.mac_x64.lifecycle": {
+      "schemaVersion": 1,
+      "sourceSets": ["shell.spec.mac.lifecycle"],
+      "parameters": ["matrix", "standaloneProtocolVersion"]
+    },
+    "shell.spec.mac_x64.silent-update": {
+      "schemaVersion": 1,
+      "sourceSets": ["shell.spec.mac.silent-update"],
+      "parameters": ["matrix", "standaloneProtocolVersion"]
+    },
+    "shell.spec.mac_x64.rollback": {
+      "schemaVersion": 1,
+      "sourceSets": ["shell.spec.mac.rollback"],
+      "parameters": ["matrix", "standaloneProtocolVersion"]
+    },
+    "shell.spec.win_x64.lifecycle": {
+      "schemaVersion": 1,
+      "sourceSets": ["shell.spec.win.lifecycle"],
+      "parameters": ["matrix", "standaloneProtocolVersion"]
+    },
+    "shell.spec.win_x64.silent-update": {
+      "schemaVersion": 1,
+      "sourceSets": ["shell.spec.win.silent-update"],
+      "parameters": ["matrix", "standaloneProtocolVersion"]
+    },
+    "shell.spec.win_x64.rollback": {
+      "schemaVersion": 1,
+      "sourceSets": ["shell.spec.win.rollback"],
+      "parameters": ["matrix", "standaloneProtocolVersion"]
+    },
+    "shell.spec.win_x64.native-install": {
+      "schemaVersion": 1,
+      "sourceSets": ["shell.spec.win.native-install"],
+      "parameters": ["matrix", "standaloneProtocolVersion"]
+    },
+    "shell.spec.win_x64.legacy-migration": {
+      "schemaVersion": 1,
+      "sourceSets": ["shell.spec.win.legacy-migration"],
       "parameters": ["matrix", "standaloneProtocolVersion"]
     },
     "closure.shared.build": {

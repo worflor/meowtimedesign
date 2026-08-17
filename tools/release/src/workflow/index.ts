@@ -1,4 +1,23 @@
 export { createReleaseWorkflow } from "./factory.ts";
+export { declareDesktopReleaseWorkflow } from "./desktop.ts";
+export { planReleaseWorkflow, type ReleaseWorkflowPlannerDependencies } from "./planner.ts";
+export {
+  createReleaseWorkflowReceiptResolver,
+  registerReleaseWorkflowReceipt,
+  workflowReceiptObjectKey,
+} from "./receipt-store.ts";
+export {
+  releaseWorkflowPlanNodeSchema,
+  releaseWorkflowPlanSchema,
+  releaseWorkflowReceiptOutputSchema,
+  releaseWorkflowReceiptSchema,
+  releaseWorkflowRequestSchema,
+  releaseWorkflowTargetRequestSchema,
+  type ReleaseWorkflowPlan,
+  type ReleaseWorkflowPlanNode,
+  type ReleaseWorkflowReceipt,
+  type ReleaseWorkflowRequest,
+} from "./protocol.ts";
 export {
   RELEASE_WORKFLOW_DEFINITION_PATHS,
   releaseWorkflowAtomDeclarationSchema,

@@ -100,7 +100,7 @@ export function rebindClosureContribution(
   });
 }
 
-function validateRecord(value: unknown, expected: Readonly<{
+export function validateClosureBuildRecord(value: unknown, expected: Readonly<{
   channel: ReleaseChannel;
   identityDigest: Digest;
   kind: ClosureBuildKind;
@@ -174,7 +174,7 @@ export async function resolveClosureBuild(): Promise<void> {
   }
   let record: ClosureBuildRecord;
   try {
-    record = validateRecord(JSON.parse(object.text) as unknown, { channel, identityDigest, kind, token });
+    record = validateClosureBuildRecord(JSON.parse(object.text) as unknown, { channel, identityDigest, kind, token });
   } catch (error) {
     githubOutput("state", "miss");
     console.log(`Closure build record is invalid; rebuilding: ${error instanceof Error ? error.message : String(error)}`);
@@ -253,7 +253,7 @@ export async function registerClosureBuild(): Promise<void> {
     if (result.status !== 412) throw new Error(`immutable Closure build record PUT failed with HTTP ${result.status}: ${result.body}`);
     const existing = await getStorageObject({ ...storage, objectKey: recordKey });
     if (existing == null) throw new Error(`immutable Closure build record disappeared: ${recordKey}`);
-    validateRecord(JSON.parse(existing.text) as unknown, { channel, identityDigest, kind, token });
+    validateClosureBuildRecord(JSON.parse(existing.text) as unknown, { channel, identityDigest, kind, token });
   }
   console.log(`registered immutable Closure build: ${prefix}`);
 }

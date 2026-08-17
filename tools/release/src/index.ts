@@ -1,8 +1,58 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { cac } from "cac";
 
 const cli = cac("tools-release");
+
+cli
+  .command("workflow <action>", "Seal the desktop workflow, compile a release plan, or register a receipt")
+  .option("--input <path>", "request or receipt JSON input")
+  .option("--output <path>", "write canonical JSON output")
+  .option("--root <path>", "workspace root (default: cwd)")
+  .action(async (action: string, options: { input?: string; output?: string; root?: string }) => {
+    const { readIdentityRegistry } = await import("./identity/declaration/registry.ts");
+    const { resolveReleaseIdentity, resolveReleaseWorkspaceRoot } = await import("./identity/resolution/resolve.ts");
+    const {
+      createReleaseWorkflowReceiptResolver,
+      declareDesktopReleaseWorkflow,
+      planReleaseWorkflow,
+      registerReleaseWorkflowReceipt,
+      releaseWorkflowRequestSchema,
+    } = await import("./workflow/index.ts");
+    const workspaceRoot = resolveReleaseWorkspaceRoot(options.root);
+    if (action === "manifest") {
+      const sealed = declareDesktopReleaseWorkflow(await readIdentityRegistry(workspaceRoot));
+      const body = `${JSON.stringify({ digest: sealed.digest, manifest: sealed.manifest }, null, 2)}\n`;
+      if (options.output == null) process.stdout.write(body);
+      else writeFileSync(resolve(options.output), body, "utf8");
+      return;
+    }
+    if (options.input == null) throw new Error(`workflow ${action} requires --input`);
+    if (action === "plan") {
+      const request = releaseWorkflowRequestSchema.parse(JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown);
+      const sealed = declareDesktopReleaseWorkflow(await readIdentityRegistry(workspaceRoot));
+      const { storageConfigFromEnv } = await import("./storage/common.ts");
+      const plan = await planReleaseWorkflow(sealed.manifest, request, {
+        resolveIdentity: async ({ id, parameters }) => (await resolveReleaseIdentity({ id, parameters, workspaceRoot })).digest,
+        resolveReceipt: createReleaseWorkflowReceiptResolver({ request, storage: storageConfigFromEnv() }),
+      });
+      const body = `${JSON.stringify(plan, null, 2)}\n`;
+      if (options.output == null) process.stdout.write(body);
+      else writeFileSync(resolve(options.output), body, "utf8");
+      return;
+    }
+    if (action === "register-receipt") {
+      const { storageConfigFromEnv } = await import("./storage/common.ts");
+      const state = await registerReleaseWorkflowReceipt(
+        storageConfigFromEnv(),
+        JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown,
+      );
+      process.stdout.write(`${state}\n`);
+      return;
+    }
+    throw new Error(`workflow action must be manifest, plan, or register-receipt; got ${action}`);
+  });
 
 cli
   .command("identity <action> <id>", "Resolve or print one declared release identity")

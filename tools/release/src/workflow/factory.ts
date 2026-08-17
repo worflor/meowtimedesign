@@ -57,6 +57,18 @@ const atomEffects = {
   "atom.transact.reserve": "cas-transition",
 } as const;
 
+const atomGates = {
+  "atom.attest.publication": "publish",
+  "atom.build.closureShared": "always",
+  "atom.build.closureTarget": "always",
+  "atom.build.shell": "always",
+  "atom.compose.manifest": "always",
+  "atom.notify.release": "always",
+  "atom.project.object": "publish",
+  "atom.transact.activate": "activate",
+  "atom.transact.reserve": "counted",
+} as const;
+
 function validateIdentity(
   binding: NonNullable<ReleaseWorkflowAtomDeclaration["identity"]> | ReleaseWorkflowProofDeclaration["identity"],
   inputs: ReleaseWorkflowInputClasses,
@@ -182,7 +194,7 @@ export function createReleaseWorkflow(options: ReleaseWorkflowFactoryOptions): R
       ...(input.identity == null ? {} : { identity: normalizedIdentity(input.identity) }),
       inputs: normalizedInputs(input.inputs),
       outputs: normalizedOutputs(input.outputs),
-    } as unknown as ReleaseWorkflowAtomDeclaration & Record<string, unknown>, { effect: atomEffects[path] });
+    } as unknown as ReleaseWorkflowAtomDeclaration & Record<string, unknown>, { effect: atomEffects[path], gate: atomGates[path] });
   }
 
   function proof<Path extends "proof.installed.scenario" | "proof.qualification.channel" | "proof.transition.updater">(
@@ -201,7 +213,7 @@ export function createReleaseWorkflow(options: ReleaseWorkflowFactoryOptions): R
       inputs: normalizedInputs(input.inputs),
       outputs: normalizedOutputs(input.outputs),
       proves: [...input.proves].sort(),
-    } as unknown as ReleaseWorkflowProofDeclaration & Record<string, unknown>, { effect: "proof" });
+    } as unknown as ReleaseWorkflowProofDeclaration & Record<string, unknown>, { effect: "proof", gate: "always" });
   }
 
   function policy<Path extends "policy.channel.exact" | "policy.channel.prerelease" | "policy.channel.stable">(

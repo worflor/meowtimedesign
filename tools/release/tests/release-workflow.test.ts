@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { canonicalMetadataJson, metadataDigest } from "@open-design/metatool";
 
 import type { IdentityRegistry } from "../src/identity/declaration/schema.ts";
 import {
   createReleaseWorkflow,
+  planReleaseWorkflow,
   releaseWorkflowManifestSchema,
   type ReleaseWorkflowAtomDeclaration,
   type ReleaseWorkflowExecutorReference,
@@ -20,6 +22,13 @@ const identities = {
 } as const satisfies IdentityRegistry;
 
 const shellAtom = {
+  bindings: {
+    actor: { path: "release.commit", source: "request" },
+    profile: { path: "release.profile", source: "request" },
+    releaseVersion: { path: "release.releaseVersion", source: "request" },
+    target: { path: "target.platform", source: "target", target: "mac_arm64" },
+    timeoutSeconds: { source: "literal", value: 900 },
+  },
   confidence: "certain",
   id: "shell",
   identity: { ids: ["shell.build.mac"], parameters: ["profile", "target"] },
@@ -80,6 +89,10 @@ function declareFixture(input: Readonly<{
     executor: [executorRefs.get("windows")!, executorRefs.get("mac")!],
   } as ReleaseWorkflowAtomDeclaration);
   const installed = workflow.proof.installed.scenario({
+    bindings: {
+      matrix: { path: "target.smokeMatrix", source: "target", target: "mac_arm64" },
+      standaloneProtocolVersion: { path: "target.standaloneProtocolVersion", source: "target", target: "mac_arm64" },
+    },
     boundaries: { auth: "synthetic", release: "public-immutable" },
     confidence: "certain",
     dependsOn: [shell],
@@ -133,10 +146,22 @@ describe("ReleaseWorkflow", () => {
       { atom: { schemaVersion: 2 } },
       { atom: { confidence: "low" } },
       { atom: { identity: { ids: ["shell.build.alt"], parameters: ["profile", "target"] } } },
-      { atom: { inputs: { ...shellAtom.inputs, semantic: ["profile", "target", "variant"] } } },
-      { atom: { inputs: { ...shellAtom.inputs, materialization: ["releaseVersion", "namespace"] } } },
-      { atom: { inputs: { ...shellAtom.inputs, operational: ["timeoutSeconds", "retryLimit"] } } },
-      { atom: { inputs: { ...shellAtom.inputs, audit: ["actor", "runId"] } } },
+      { atom: {
+        bindings: { ...shellAtom.bindings, variant: { source: "literal", value: "release" } },
+        inputs: { ...shellAtom.inputs, semantic: ["profile", "target", "variant"] },
+      } },
+      { atom: {
+        bindings: { ...shellAtom.bindings, namespace: { path: "release.namespace", source: "request" } },
+        inputs: { ...shellAtom.inputs, materialization: ["releaseVersion", "namespace"] },
+      } },
+      { atom: {
+        bindings: { ...shellAtom.bindings, retryLimit: { source: "literal", value: 2 } },
+        inputs: { ...shellAtom.inputs, operational: ["timeoutSeconds", "retryLimit"] },
+      } },
+      { atom: {
+        bindings: { ...shellAtom.bindings, runId: { source: "literal", value: "fixture" } },
+        inputs: { ...shellAtom.inputs, audit: ["actor", "runId"] },
+      } },
       { atom: { outputs: [{ mediaType: "application/zip", role: "installer", schemaVersion: 1 }] } },
       { atom: { outputs: [{ mediaType: "application/octet-stream", role: "installer", schemaVersion: 2 }] } },
       { atom: { witness: "release-workflow.shell-v2" } },
@@ -175,6 +200,10 @@ describe("ReleaseWorkflow", () => {
     const workflow = createReleaseWorkflow({ id: "fixture", identities, schemaVersion: 1 });
     const control = workflow.executor.control({ capabilities: ["control"], id: "control", runnerClass: "ubuntu", schemaVersion: 1 });
     expect(() => workflow.proof.installed.scenario({
+      bindings: {
+        matrix: { path: "target.smokeMatrix", source: "target", target: "mac_arm64" },
+        standaloneProtocolVersion: { path: "target.standaloneProtocolVersion", source: "target", target: "mac_arm64" },
+      },
       boundaries: { hidden: (() => true) as unknown as string },
       confidence: "certain",
       dependsOn: [],
@@ -211,6 +240,11 @@ describe("ReleaseWorkflow", () => {
     const workflow = createReleaseWorkflow({ id: "fixture", identities, schemaVersion: 1 });
     const control = workflow.executor.control({ capabilities: ["control"], id: "control", runnerClass: "ubuntu", schemaVersion: 1 });
     const reserve = workflow.atom.transact.reserve({
+      bindings: {
+        actor: { path: "release.commit", source: "request" },
+        channel: { path: "release.channel", source: "request" },
+        namespace: { path: "release.namespace", source: "request" },
+      },
       confidence: "certain",
       executor: control,
       id: "reserve",
@@ -271,5 +305,79 @@ describe("ReleaseWorkflow", () => {
     desktop.config.executors = (desktop.config.executors as Array<{ $ref: string }>).filter(({ $ref }) => $ref !== control.id);
     desktop.config.references = (desktop.config.references as string[]).filter((reference) => reference !== control.id);
     expect(() => releaseWorkflowManifestSchema.parse(orphaned)).toThrow(/outside the release graph/u);
+  });
+
+  it("plans cold and hot execution from the same canonical workflow", async () => {
+    const { sealed } = declareFixture();
+    const request = {
+      formatVersion: 1,
+      provenance: {
+        actor: "PerishCode",
+        event: "workflow_dispatch",
+        repository: "nexu-io/open-design",
+        runAttempt: 1,
+        runId: "123",
+        workflow: "release-beta",
+      },
+      release: {
+        activate: true,
+        channel: "beta",
+        commit: "a".repeat(40),
+        minShellVersion: "0.19.4-beta.31",
+        namespace: "release-beta",
+        nodeVersion: "24.18.0",
+        packageManager: "pnpm@10.33.2",
+        profile: "test",
+        publicOrigin: "https://releases.example.com",
+        publish: true,
+        releaseVersion: "0.19.4-beta.31",
+      },
+      targets: [{
+        buildTarget: "dmg",
+        name: "mac_arm64",
+        namespace: "release-beta",
+        nodeModulesAbi: "137",
+        nodeNapi: "10",
+        platform: "darwin-arm64",
+        signMode: "notarized",
+        smokeMatrix: "mac-shell-v3",
+        standaloneProtocolVersion: 1,
+      }],
+      workflowDigest: sealed.digest,
+    } as const;
+    const receipts = new Map<string, unknown>();
+    const dependencies = {
+      now: () => new Date("2026-08-17T08:00:00.000Z"),
+      resolveIdentity: async (input: unknown) => metadataDigest(canonicalMetadataJson(input)),
+      resolveReceipt: async ({ executionDigest }: { executionDigest: string }) => receipts.get(executionDigest) ?? null,
+    };
+    const cold = await planReleaseWorkflow(sealed.manifest, request, dependencies);
+    expect(cold.nodes.map(({ decision }) => decision)).toEqual(["execute", "execute"]);
+    expect(cold.nodes.map(({ path }) => path)).toEqual(["atom.build.shell", "proof.installed.scenario"]);
+
+    for (const node of cold.nodes) {
+      const definition = sealed.manifest.definitions.find(({ id }) => id === node.nodeId)!;
+      if (definition.path !== "atom.build.shell" && definition.path !== "proof.installed.scenario") throw new Error("unexpected fixture node");
+      receipts.set(node.executionDigest, {
+        definitionDigest: node.definitionDigest,
+        effect: node.effect,
+        executionDigest: node.executionDigest,
+        nodeId: node.nodeId,
+        outputs: definition.config.outputs.map(({ mediaType, role, schemaVersion }) => ({
+          digest: metadataDigest(role),
+          ...(mediaType == null ? {} : { mediaType }),
+          role,
+          schemaVersion,
+        })),
+        provenance: { runId: "122" },
+        recordedAt: "2026-08-17T07:00:00.000Z",
+        schemaVersion: 1,
+        semanticDigest: node.semanticDigest,
+        status: "success",
+      });
+    }
+    const hot = await planReleaseWorkflow(sealed.manifest, request, dependencies);
+    expect(hot.nodes.map(({ decision }) => decision)).toEqual(["replay", "replay"]);
+    expect(hot.nodes.map(({ reason }) => reason)).toEqual(["receipt-hit", "receipt-hit"]);
   });
 });

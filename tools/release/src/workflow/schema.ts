@@ -36,6 +36,67 @@ const definitionIdSchema = z.string().regex(/^[a-z][a-z0-9-]*$/u);
 const fieldNameSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9]*$/u);
 const roleSchema = z.string().regex(/^[a-z][a-zA-Z0-9.-]*$/u);
 const positiveIntegerSchema = z.number().int().positive().safe();
+const releaseTargetSchema = z.enum(["mac_arm64", "mac_x64", "win_x64"]);
+
+export const RELEASE_WORKFLOW_REQUEST_INPUT_PATHS = [
+  "release.activate",
+  "release.channel",
+  "release.commit",
+  "release.minShellVersion",
+  "release.namespace",
+  "release.nodeVersion",
+  "release.packageManager",
+  "release.profile",
+  "release.publicOrigin",
+  "release.publish",
+  "release.releaseVersion",
+] as const;
+
+export const RELEASE_WORKFLOW_TARGET_INPUT_PATHS = [
+  "target.buildTarget",
+  "target.name",
+  "target.namespace",
+  "target.nodeModulesAbi",
+  "target.nodeNapi",
+  "target.platform",
+  "target.signMode",
+  "target.smokeMatrix",
+  "target.standaloneProtocolVersion",
+] as const;
+
+const canonicalLiteralSchema = z.unknown().superRefine((value, context) => {
+  try {
+    canonicalMetadataJson(value);
+  } catch (error) {
+    context.addIssue({ code: "custom", message: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+export const releaseWorkflowInputBindingSchema = z.discriminatedUnion("source", [
+  z.object({ path: z.enum(RELEASE_WORKFLOW_REQUEST_INPUT_PATHS), source: z.literal("request") }).strict(),
+  z.object({ path: z.enum(RELEASE_WORKFLOW_TARGET_INPUT_PATHS), source: z.literal("target"), target: releaseTargetSchema }).strict(),
+  z.object({ source: z.literal("literal"), value: canonicalLiteralSchema }).strict(),
+]);
+
+function declaredInputNames(value: z.infer<typeof releaseWorkflowInputClassesSchema>): string[] {
+  return [
+    ...value.semantic,
+    ...(value.materialization ?? []),
+    ...(value.operational ?? []),
+    ...(value.audit ?? []),
+  ].sort();
+}
+
+function validateBindings(
+  value: Readonly<{ bindings: Record<string, unknown>; inputs: z.infer<typeof releaseWorkflowInputClassesSchema> }>,
+  context: z.RefinementCtx,
+): void {
+  const expected = declaredInputNames(value.inputs);
+  const actual = Object.keys(value.bindings).sort();
+  if (canonicalMetadataJson(actual) !== canonicalMetadataJson(expected)) {
+    context.addIssue({ code: "custom", message: "input bindings must exactly cover declared inputs", path: ["bindings"] });
+  }
+}
 
 function uniqueArray<Value extends z.ZodTypeAny>(
   value: Value,
@@ -99,6 +160,7 @@ const definitionBaseSchema = z.object({
 }).strict();
 
 export const releaseWorkflowAtomDeclarationSchema = definitionBaseSchema.extend({
+  bindings: z.record(fieldNameSchema, releaseWorkflowInputBindingSchema),
   confidence: z.enum(["certain", "low"]),
   dependsOn: uniqueArray(z.union([atomReferenceSchema, proofReferenceSchema]), "atom dependencies").optional(),
   executor: z.union([executorReferenceSchema, uniqueArray(executorReferenceSchema, "atom executors", { min: 1 })]),
@@ -107,12 +169,14 @@ export const releaseWorkflowAtomDeclarationSchema = definitionBaseSchema.extend(
   outputs: uniqueArray(releaseWorkflowOutputDeclarationSchema, "atom outputs", { min: 1 }),
   witness: z.string().min(1),
 }).superRefine((value, context) => {
+  validateBindings(value, context);
   if (new Set(value.outputs.map(({ role }) => role)).size !== value.outputs.length) {
     context.addIssue({ code: "custom", message: "atom output roles must be unique", path: ["outputs"] });
   }
 });
 
 export const releaseWorkflowProofDeclarationSchema = definitionBaseSchema.extend({
+  bindings: z.record(fieldNameSchema, releaseWorkflowInputBindingSchema),
   boundaries: z.record(z.string(), z.string()),
   confidence: z.enum(["certain", "low"]),
   dependsOn: uniqueArray(atomReferenceSchema, "proof dependencies"),
@@ -129,6 +193,7 @@ export const releaseWorkflowProofDeclarationSchema = definitionBaseSchema.extend
   proves: uniqueArray(z.string().min(1), "proves", { min: 1 }),
   witness: z.string().min(1),
 }).superRefine((value, context) => {
+  validateBindings(value, context);
   if (new Set(value.outputs.map(({ role }) => role)).size !== value.outputs.length) {
     context.addIssue({ code: "custom", message: "proof output roles must be unique", path: ["outputs"] });
   }
@@ -217,9 +282,11 @@ const normalizedInputClassesSchema = z.object({
 });
 
 const manifestAtomConfigSchema = z.object({
+  bindings: z.record(fieldNameSchema, releaseWorkflowInputBindingSchema),
   confidence: z.enum(["certain", "low"]),
   dependsOn: uniqueArray(z.union([manifestAtomReferenceSchema, manifestProofReferenceSchema]), "atom dependencies"),
   effect: z.enum(["cas-transition", "conditional-copy", "immutable-write", "notification", "pure"]),
+  gate: z.enum(["activate", "always", "counted", "publish"]),
   executor: uniqueArray(manifestExecutorReferenceSchema, "atom executors", { min: 1 }),
   identity: releaseWorkflowIdentityBindingSchema.optional(),
   inputs: normalizedInputClassesSchema,
@@ -227,17 +294,20 @@ const manifestAtomConfigSchema = z.object({
   references: manifestReferencesSchema,
   witness: z.string().min(1),
 }).strict().superRefine((value, context) => {
+  validateBindings(value, context);
   if (new Set(value.outputs.map(({ role }) => role)).size !== value.outputs.length) {
     context.addIssue({ code: "custom", message: "atom output roles must be unique", path: ["outputs"] });
   }
 });
 
 const manifestProofConfigSchema = z.object({
+  bindings: z.record(fieldNameSchema, releaseWorkflowInputBindingSchema),
   boundaries: z.record(z.string(), z.string()),
   confidence: z.enum(["certain", "low"]),
   dependsOn: uniqueArray(manifestAtomReferenceSchema, "proof dependencies"),
   doesNotProve: uniqueArray(z.string().min(1), "doesNotProve"),
   effect: z.literal("proof"),
+  gate: z.literal("always"),
   executor: uniqueArray(manifestExecutorReferenceSchema, "proof executors", { min: 1 }),
   identity: releaseWorkflowIdentityBindingSchema,
   inputs: normalizedInputClassesSchema,
@@ -251,6 +321,7 @@ const manifestProofConfigSchema = z.object({
   references: manifestReferencesSchema,
   witness: z.string().min(1),
 }).strict().superRefine((value, context) => {
+  validateBindings(value, context);
   if (new Set(value.outputs.map(({ role }) => role)).size !== value.outputs.length) {
     context.addIssue({ code: "custom", message: "proof output roles must be unique", path: ["outputs"] });
   }
@@ -284,7 +355,7 @@ const manifestDesktopConfigSchema = z.object({
   policies: uniqueArray(manifestPolicyReferenceSchema, "desktop policies", { length: 3 }),
   proofs: uniqueArray(manifestProofReferenceSchema, "desktop proofs"),
   references: manifestReferencesSchema,
-  targets: uniqueArray(z.enum(["mac_arm64", "mac_x64", "win_x64"]), "desktop targets", { min: 1 }),
+  targets: uniqueArray(releaseTargetSchema, "desktop targets", { min: 1 }),
 }).strict().superRefine((value, context) => {
   for (const path of ["policy.channel.exact", "policy.channel.prerelease", "policy.channel.stable"] as const) {
     if (!value.policies.some(({ $ref }) => $ref.includes(`/${path}/`))) {
