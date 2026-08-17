@@ -98,14 +98,23 @@ describe("release workflow execution", () => {
         { artifact_dir: "dmg", os: "mac", runner: "macos-15-intel", target: "mac_x64" },
       ] },
       attestTargets: ["mac_arm64", "win_x64"],
-      buildMatrix: { include: [{ runner: "macos-15-intel", target: "mac_x64" }] },
+      buildMatrix: { include: [{
+        closure_identity_digest: digest("7"),
+        proof_state: "miss",
+        runner: "macos-15-intel",
+        shell_identity_digest: digest("7"),
+        target: "mac_x64",
+      }] },
       executeTargets: ["mac_x64"],
       replayTargets: ["mac_arm64", "win_x64"],
       sharedClosure: { nodeId: "node-atom.build.closureShared-shared" },
     });
     expect(selectReleaseWorkflowTargetExecution(execution, "win_x64")).toMatchObject({
       closureTarget: { nodeId: "node-atom.build.closureTarget-win_x64" },
+      closureTargetIdentityDigest: digest("7"),
+      proofState: "hit",
       shell: { nodeId: "node-atom.build.shell-win_x64" },
+      shellIdentityDigest: digest("7"),
       target: "win_x64",
     });
   });

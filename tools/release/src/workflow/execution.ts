@@ -7,6 +7,7 @@ import {
 } from "./protocol.ts";
 
 const targetSchema = z.enum(["mac_arm64", "mac_x64", "win_x64"]);
+const digestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 
 export const releaseWorkflowExecutionSchema = z.object({
   acceptanceMatrix: z.object({
@@ -20,17 +21,24 @@ export const releaseWorkflowExecutionSchema = z.object({
   attestTargets: z.array(targetSchema),
   buildMatrix: z.object({
     include: z.array(z.object({
+      closure_identity_digest: digestSchema,
+      proof_state: z.enum(["hit", "miss"]),
       runner: z.string().min(1),
+      shell_identity_digest: digestSchema,
       target: targetSchema,
     }).strict()),
   }).strict(),
   executeTargets: z.array(targetSchema),
   replayTargets: z.array(targetSchema),
   sharedClosure: releaseWorkflowPlanNodeSchema,
+  sharedClosureIdentityDigest: digestSchema,
   targets: z.array(z.object({
     closureTarget: releaseWorkflowPlanNodeSchema,
+    closureTargetIdentityDigest: digestSchema,
+    proofState: z.enum(["hit", "miss"]),
     proofs: z.array(releaseWorkflowPlanNodeSchema),
     shell: releaseWorkflowPlanNodeSchema,
+    shellIdentityDigest: digestSchema,
     target: targetSchema,
   }).strict()),
 }).strict();
@@ -53,6 +61,15 @@ const acceptance = {
   mac_x64: { artifact_dir: "dmg", os: "mac" },
   win_x64: { artifact_dir: "builder", os: "win" },
 } as const;
+
+function soleIdentityDigest(
+  node: z.output<typeof releaseWorkflowPlanNodeSchema>,
+  label: string,
+): string {
+  const digests = Object.values(node.identityDigests);
+  if (digests.length !== 1) throw new Error(`${label} must expose exactly one canonical identity digest`);
+  return digests[0]!;
+}
 
 export function compileReleaseWorkflowExecution(planInput: unknown, requestInput: unknown): ReleaseWorkflowExecution {
   const plan = releaseWorkflowPlanSchema.parse(planInput);
@@ -77,7 +94,16 @@ export function compileReleaseWorkflowExecution(planInput: unknown, requestInput
     if (shell == null) throw new Error(`release plan has no Shell node for ${target.name}`);
     if (closureTarget == null) throw new Error(`release plan has no Closure target node for ${target.name}`);
     if (proofs.length === 0) throw new Error(`release plan has no proof nodes for ${target.name}`);
-    targetExecutions.push({ closureTarget, proofs, shell, target: target.name });
+    const proofState = proofs.some(({ decision }) => decision === "execute") ? "miss" as const : "hit" as const;
+    targetExecutions.push({
+      closureTarget,
+      closureTargetIdentityDigest: soleIdentityDigest(closureTarget, `${target.name} Closure target node`),
+      proofState,
+      proofs,
+      shell,
+      shellIdentityDigest: soleIdentityDigest(shell, `${target.name} Shell node`),
+      target: target.name,
+    });
     const lifecycle = plan.nodes.find((node) =>
       node.effect === "proof"
       && node.inputs.semantic.releaseTarget === target.name
@@ -95,10 +121,22 @@ export function compileReleaseWorkflowExecution(planInput: unknown, requestInput
       })),
     },
     attestTargets,
-    buildMatrix: { include: executeTargets.map((target) => ({ runner: runners[target], target })) },
+    buildMatrix: {
+      include: executeTargets.map((target) => {
+        const execution = targetExecutions.find((entry) => entry.target === target)!;
+        return {
+          closure_identity_digest: execution.closureTargetIdentityDigest,
+          proof_state: execution.proofState,
+          runner: runners[target],
+          shell_identity_digest: execution.shellIdentityDigest,
+          target,
+        };
+      }),
+    },
     executeTargets,
     replayTargets,
     sharedClosure,
+    sharedClosureIdentityDigest: soleIdentityDigest(sharedClosure, "shared Closure node"),
     targets: targetExecutions,
   });
 }

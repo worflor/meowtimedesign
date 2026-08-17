@@ -7,11 +7,22 @@ const cli = cac("tools-release");
 
 cli
   .command("workflow <action>", "Seal the desktop workflow, compile a release plan, or register a receipt")
+  .option("--evidence-source <source>", "scenario receipt evidence source")
   .option("--input <path>", "request or receipt JSON input")
   .option("--output <path>", "write canonical JSON output")
+  .option("--plan <path>", "canonical workflow plan input")
   .option("--root <path>", "workspace root (default: cwd)")
+  .option("--summary <path>", "scenario evidence summary input")
   .option("--target <target>", "select one canonical release target")
-  .action(async (action: string, options: { input?: string; output?: string; root?: string; target?: string }) => {
+  .action(async (action: string, options: {
+    evidenceSource?: string;
+    input?: string;
+    output?: string;
+    plan?: string;
+    root?: string;
+    summary?: string;
+    target?: string;
+  }) => {
     const { readIdentityRegistry } = await import("./identity/declaration/registry.ts");
     const { resolveReleaseIdentity, resolveReleaseWorkspaceRoot } = await import("./identity/resolution/resolve.ts");
     const {
@@ -48,9 +59,30 @@ cli
       else writeFileSync(resolve(options.output), body, "utf8");
       return;
     }
-    if (options.input == null) throw new Error(`workflow ${action} requires --input`);
+    if (action === "register-scenario-receipts") {
+      const registration = scenarioReceiptRegistrationInputSchema.parse(options.input != null
+        ? JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown
+        : {
+            evidenceSource: options.evidenceSource,
+            plan: options.plan == null ? undefined : JSON.parse(readFileSync(resolve(options.plan), "utf8")) as unknown,
+            summary: options.summary == null ? undefined : JSON.parse(readFileSync(resolve(options.summary), "utf8")) as unknown,
+            target: options.target,
+          });
+      const { storageConfigFromEnv } = await import("./storage/common.ts");
+      const registered = await registerScenarioReceipts({
+        evidenceSource: registration.evidenceSource,
+        plan: registration.plan,
+        storage: storageConfigFromEnv(),
+        summary: registration.summary,
+        target: registration.target,
+      });
+      process.stdout.write(`${JSON.stringify(registered)}\n`);
+      return;
+    }
+    const input = options.input;
+    if (input == null) throw new Error(`workflow ${action} requires --input`);
     if (action === "plan") {
-      const request = releaseWorkflowRequestSchema.parse(JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown);
+      const request = releaseWorkflowRequestSchema.parse(JSON.parse(readFileSync(resolve(input), "utf8")) as unknown);
       const { storageConfigFromEnv } = await import("./storage/common.ts");
       const plan = await planReleaseWorkflow(sealed.manifest, request, {
         resolveIdentity: async ({ id, parameters }) => (await resolveReleaseIdentity({ id, parameters, workspaceRoot })).digest,
@@ -62,8 +94,8 @@ cli
       return;
     }
     if (action === "execution") {
-      const input = releaseWorkflowExecutionInputSchema.parse(JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown);
-      const execution = compileReleaseWorkflowExecution(input.plan, input.request);
+      const executionInput = releaseWorkflowExecutionInputSchema.parse(JSON.parse(readFileSync(resolve(input), "utf8")) as unknown);
+      const execution = compileReleaseWorkflowExecution(executionInput.plan, executionInput.request);
       const body = `${JSON.stringify(execution, null, 2)}\n`;
       if (options.output == null) process.stdout.write(body);
       else writeFileSync(resolve(options.output), body, "utf8");
@@ -72,7 +104,7 @@ cli
     if (action === "target-execution") {
       if (options.target == null) throw new Error("workflow target-execution requires --target");
       const execution = selectReleaseWorkflowTargetExecution(
-        JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown,
+        JSON.parse(readFileSync(resolve(input), "utf8")) as unknown,
         options.target,
       );
       const body = `${JSON.stringify(execution, null, 2)}\n`;
@@ -81,15 +113,15 @@ cli
       return;
     }
     if (action === "attest-public-target") {
-      const input = publicAttestationInputSchema.parse(JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown);
-      const credential = await attestWorkflowPublicTarget(input);
+      const attestationInput = publicAttestationInputSchema.parse(JSON.parse(readFileSync(resolve(input), "utf8")) as unknown);
+      const credential = await attestWorkflowPublicTarget(attestationInput);
       const body = `${JSON.stringify(credential, null, 2)}\n`;
       if (options.output == null) process.stdout.write(body);
       else writeFileSync(resolve(options.output), body, "utf8");
       return;
     }
     if (action === "project-candidate-target") {
-      const projection = candidateTargetProjectionInputSchema.parse(JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown);
+      const projection = candidateTargetProjectionInputSchema.parse(JSON.parse(readFileSync(resolve(input), "utf8")) as unknown);
       const { storageConfigFromEnv } = await import("./storage/common.ts");
       const result = await projectCandidateTargetFromShellReceipt({
         candidateId: projection.candidateId,
@@ -106,7 +138,7 @@ cli
       return;
     }
     if (action === "materialize-replay-target") {
-      const projection = replayTargetMaterializationInputSchema.parse(JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown);
+      const projection = replayTargetMaterializationInputSchema.parse(JSON.parse(readFileSync(resolve(input), "utf8")) as unknown);
       const { storageConfigFromEnv } = await import("./storage/common.ts");
       const request = projection.request;
       const targetName = projection.target;
@@ -150,22 +182,9 @@ cli
       const { storageConfigFromEnv } = await import("./storage/common.ts");
       const state = await registerReleaseWorkflowReceipt(
         storageConfigFromEnv(),
-        JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown,
+        JSON.parse(readFileSync(resolve(input), "utf8")) as unknown,
       );
       process.stdout.write(`${state}\n`);
-      return;
-    }
-    if (action === "register-scenario-receipts") {
-      const registration = scenarioReceiptRegistrationInputSchema.parse(JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown);
-      const { storageConfigFromEnv } = await import("./storage/common.ts");
-      const registered = await registerScenarioReceipts({
-        evidenceSource: registration.evidenceSource,
-        plan: registration.plan,
-        storage: storageConfigFromEnv(),
-        summary: registration.summary,
-        target: registration.target,
-      });
-      process.stdout.write(`${JSON.stringify(registered)}\n`);
       return;
     }
     throw new Error(`unsupported workflow action: ${action}`);

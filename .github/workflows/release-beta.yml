@@ -326,6 +326,7 @@ jobs:
 
       - name: Compile canonical release workflow plan
         id: execution
+        uses: actions/github-script@v8
         env:
           APPLE_SIGNING_CERTIFICATE_BASE64: ${{ secrets.APPLE_SIGNING_CERTIFICATE_BASE64 }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -343,80 +344,78 @@ jobs:
           RELEASE_STORAGE_REGION: auto
           RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_RELEASES_SK }}
           RELEASE_VERSION: ${{ steps.reservation.outputs.release_version || steps.exact.outputs.release_version }}
-        run: |
-          set -euo pipefail
-          workflow_root="$RUNNER_TEMP/release-workflow"
-          profile_root="$RUNNER_TEMP/release-workflow-profiles"
-          mkdir -p "$workflow_root" "$profile_root"
-          shell_version="${{ steps.reservation.outputs.release_version || steps.exact.outputs.release_version }}"
-          pnpm exec tools-pack mac identity \
-            --dir "$profile_root/mac-arm64" \
-            --cache-dir "$profile_root/cache-mac-arm64" \
-            --namespace "release-${{ inputs.exact_name }}" \
-            --portable \
-            --release-version "$shell_version" \
-            --shell-version "$shell_version" \
-            --mac-compression normal \
-            --to dmg \
-            --sign-mode notarized \
-            --json > "$profile_root/mac-arm64.json"
-          pnpm exec tools-pack mac identity \
-            --dir "$profile_root/mac-x64" \
-            --cache-dir "$profile_root/cache-mac-x64" \
-            --namespace "release-${{ inputs.exact_name }}-x64" \
-            --portable \
-            --release-version "$shell_version" \
-            --shell-version "$shell_version" \
-            --mac-compression normal \
-            --to all \
-            --sign-mode notarized \
-            --json > "$profile_root/mac-x64.json"
-          pnpm exec tools-pack win identity \
-            --dir "$profile_root/win-x64" \
-            --cache-dir "$profile_root/cache-win-x64" \
-            --namespace "release-${{ inputs.exact_name }}-win" \
-            --portable \
-            --release-version "$shell_version" \
-            --shell-version "$shell_version" \
-            --to all \
-            --sign-mode unsigned \
-            --json > "$profile_root/win-x64.json"
-          RELEASE_MAC_ARM64_SHELL_PROFILE_DIGEST="$(jq -er '.profileDigest' "$profile_root/mac-arm64.json")"
-          RELEASE_MAC_X64_SHELL_PROFILE_DIGEST="$(jq -er '.profileDigest' "$profile_root/mac-x64.json")"
-          RELEASE_WIN_X64_SHELL_PROFILE_DIGEST="$(jq -er '.profileDigest' "$profile_root/win-x64.json")"
-          export RELEASE_MAC_ARM64_SHELL_PROFILE_DIGEST
-          export RELEASE_MAC_X64_SHELL_PROFILE_DIGEST
-          export RELEASE_WIN_X64_SHELL_PROFILE_DIGEST
-          pnpm exec tools-release workflow request --output "$workflow_root/request.json"
-          pnpm exec tools-release workflow plan --input "$workflow_root/request.json" --output "$workflow_root/plan.json"
-          jq -n \
-            --slurpfile plan "$workflow_root/plan.json" \
-            --slurpfile request "$workflow_root/request.json" \
-            '{plan: $plan[0], request: $request[0]}' > "$workflow_root/execution-input.json"
-          pnpm exec tools-release workflow execution --input "$workflow_root/execution-input.json" --output "$workflow_root/execution.json"
-          build_matrix="$(jq -c '.buildMatrix' "$workflow_root/execution.json")"
-          shared_closure_digest="$(jq -er '.sharedClosure.identityDigests | values | if length == 1 then .[0] else error("shared Closure node must expose one identity") end' "$workflow_root/execution.json")"
-          {
-            echo "build_matrix=$build_matrix"
-            echo "acceptance_matrix=$(jq -c '.acceptanceMatrix' "$workflow_root/execution.json")"
-            echo "attest_targets=$(jq -c '.attestTargets' "$workflow_root/execution.json")"
-            echo "shared_closure_digest=$shared_closure_digest"
-            for target in mac_arm64 mac_x64 win_x64; do
-              if jq -e --arg target "$target" '.replayTargets | index($target) != null' "$workflow_root/execution.json" >/dev/null; then
-                echo "${target}_execution=replay"
-              else
-                echo "${target}_execution=execute"
-              fi
-            done
-          } >> "$GITHUB_OUTPUT"
-          {
-            echo "### Canonical workflow plan"
-            echo
-            echo '| Target | Decision |'
-            echo '| --- | --- |'
-            jq -r '.executeTargets[] | "| `\(.)` | execute |"' "$workflow_root/execution.json"
-            jq -r '.replayTargets[] | "| `\(.)` | replay |"' "$workflow_root/execution.json"
-          } >> "$GITHUB_STEP_SUMMARY"
+        with:
+          script: |
+            const fs = require("fs");
+            const path = require("path");
+            const workflowRoot = path.join(process.env.RUNNER_TEMP, "release-workflow");
+            const profileRoot = path.join(process.env.RUNNER_TEMP, "release-workflow-profiles");
+            fs.mkdirSync(workflowRoot, { recursive: true });
+            fs.mkdirSync(profileRoot, { recursive: true });
+
+            const shellVersion = process.env.RELEASE_VERSION;
+            const channel = process.env.RELEASE_CHANNEL;
+            async function compileProfile(name, platform, args) {
+              const result = await exec.getExecOutput("pnpm", [
+                "exec", "tools-pack", platform, "identity",
+                "--dir", path.join(profileRoot, name),
+                "--cache-dir", path.join(profileRoot, `cache-${name}`),
+                ...args,
+                "--portable",
+                "--release-version", shellVersion,
+                "--shell-version", shellVersion,
+                "--json",
+              ]);
+              const profile = JSON.parse(result.stdout);
+              fs.writeFileSync(path.join(profileRoot, `${name}.json`), JSON.stringify(profile, null, 2));
+              return profile.profileDigest;
+            }
+
+            const macArm64Digest = await compileProfile("mac-arm64", "mac", [
+              "--namespace", `release-${channel}`,
+              "--mac-compression", "normal", "--to", "dmg", "--sign-mode", "notarized",
+            ]);
+            const macX64Digest = await compileProfile("mac-x64", "mac", [
+              "--namespace", `release-${channel}-x64`,
+              "--mac-compression", "normal", "--to", "all", "--sign-mode", "notarized",
+            ]);
+            const winX64Digest = await compileProfile("win-x64", "win", [
+              "--namespace", `release-${channel}-win`, "--to", "all", "--sign-mode", "unsigned",
+            ]);
+            core.exportVariable("RELEASE_MAC_ARM64_SHELL_PROFILE_DIGEST", macArm64Digest);
+            core.exportVariable("RELEASE_MAC_X64_SHELL_PROFILE_DIGEST", macX64Digest);
+            core.exportVariable("RELEASE_WIN_X64_SHELL_PROFILE_DIGEST", winX64Digest);
+
+            const requestPath = path.join(workflowRoot, "request.json");
+            const planPath = path.join(workflowRoot, "plan.json");
+            const executionInputPath = path.join(workflowRoot, "execution-input.json");
+            const executionPath = path.join(workflowRoot, "execution.json");
+            await exec.exec("pnpm", ["exec", "tools-release", "workflow", "request", "--output", requestPath]);
+            await exec.exec("pnpm", ["exec", "tools-release", "workflow", "plan", "--input", requestPath, "--output", planPath]);
+            fs.writeFileSync(executionInputPath, JSON.stringify({
+              plan: JSON.parse(fs.readFileSync(planPath, "utf8")),
+              request: JSON.parse(fs.readFileSync(requestPath, "utf8")),
+            }));
+            await exec.exec("pnpm", ["exec", "tools-release", "workflow", "execution", "--input", executionInputPath, "--output", executionPath]);
+            const execution = JSON.parse(fs.readFileSync(executionPath, "utf8"));
+
+            core.setOutput("build_matrix", JSON.stringify(execution.buildMatrix));
+            core.setOutput("acceptance_matrix", JSON.stringify(execution.acceptanceMatrix));
+            core.setOutput("attest_targets", JSON.stringify(execution.attestTargets));
+            core.setOutput("shared_closure_digest", execution.sharedClosureIdentityDigest);
+            for (const target of ["mac_arm64", "mac_x64", "win_x64"]) {
+              core.setOutput(`${target}_execution`, execution.replayTargets.includes(target) ? "replay" : "execute");
+            }
+            await core.summary
+              .addHeading("Canonical workflow plan", 3)
+              .addTable([
+                [{ data: "Target", header: true }, { data: "Decision", header: true }],
+                ...execution.targets.map(({ target }) => [
+                  target,
+                  execution.replayTargets.includes(target) ? "replay" : "execute",
+                ]),
+              ])
+              .write();
 
       - name: Materialize canonical shared Standalone Closure
         uses: ./.github/actions/release/closure/shared
@@ -586,16 +585,19 @@ jobs:
           artifact-id: ${{ matrix.target == 'mac_arm64' && 'mac-arm64' || 'mac-x64' }}
           build-target: ${{ matrix.target == 'mac_arm64' && 'dmg' || 'all' }}
           candidate-id: ${{ needs.metadata.outputs.candidate_id }}
+          closure-identity-digest: ${{ matrix.closure_identity_digest }}
           closure-version: ${{ needs.metadata.outputs.closure_version }}
           candidate-enabled: "true"
           legacy-migration-enabled: ${{ matrix.target == 'mac_arm64' && inputs.exact_name == 'beta' && 'true' || 'false' }}
           namespace: ${{ matrix.target == 'mac_arm64' && format('release-{0}', inputs.exact_name) || format('release-{0}-x64', inputs.exact_name) }}
           platform: ${{ matrix.target == 'mac_arm64' && 'darwin-arm64' || 'darwin-x64' }}
           phase: prepare
+          proof-state: ${{ matrix.proof_state }}
           publish: "true"
           release-public-origin: ${{ inputs.release_public_origin }}
           release-version: ${{ needs.metadata.outputs.release_version }}
           shell-smoke-matrix: ${{ matrix.target == 'mac_arm64' && 'mac-shell-v3' || 'mac-shell-v2' }}
+          shell-identity-digest: ${{ matrix.shell_identity_digest }}
           shell-version: ${{ needs.metadata.outputs.shell_version }}
           sign-mode: notarized
           smoke-lanes-on-miss: ${{ matrix.target == 'mac_x64' && 'shell,standalone' || '' }}
@@ -616,16 +618,19 @@ jobs:
           artifact-id: ${{ matrix.target == 'mac_arm64' && 'mac-arm64' || 'mac-x64' }}
           build-target: ${{ matrix.target == 'mac_arm64' && 'dmg' || 'all' }}
           candidate-id: ${{ needs.metadata.outputs.candidate_id }}
+          closure-identity-digest: ${{ matrix.closure_identity_digest }}
           closure-version: ${{ needs.metadata.outputs.closure_version }}
           candidate-enabled: "true"
           legacy-migration-enabled: ${{ matrix.target == 'mac_arm64' && inputs.exact_name == 'beta' && 'true' || 'false' }}
           namespace: ${{ matrix.target == 'mac_arm64' && format('release-{0}', inputs.exact_name) || format('release-{0}-x64', inputs.exact_name) }}
           phase: finish
+          proof-state: ${{ matrix.proof_state }}
           platform: ${{ matrix.target == 'mac_arm64' && 'darwin-arm64' || 'darwin-x64' }}
           publish: "true"
           release-public-origin: ${{ inputs.release_public_origin }}
           release-version: ${{ needs.metadata.outputs.release_version }}
           shell-smoke-matrix: ${{ matrix.target == 'mac_arm64' && 'mac-shell-v3' || 'mac-shell-v2' }}
+          shell-identity-digest: ${{ matrix.shell_identity_digest }}
           shell-version: ${{ needs.metadata.outputs.shell_version }}
           sign-mode: notarized
           smoke-lanes-on-miss: ${{ matrix.target == 'mac_x64' && 'shell,standalone' || '' }}
@@ -642,11 +647,14 @@ jobs:
         with:
           channel: ${{ inputs.exact_name }}
           candidate-id: ${{ needs.metadata.outputs.candidate_id }}
+          closure-identity-digest: ${{ matrix.closure_identity_digest }}
           release-version: ${{ needs.metadata.outputs.release_version }}
           closure-version: ${{ needs.metadata.outputs.closure_version }}
           shell-version: ${{ needs.metadata.outputs.shell_version }}
+          shell-identity-digest: ${{ matrix.shell_identity_digest }}
           amr-profile: ${{ inputs.amr_profile || 'test' }}
           phase: prepare
+          proof-state: ${{ matrix.proof_state }}
           publish: "true"
           release-public-origin: ${{ inputs.release_public_origin }}
           sign-mode: unsigned
@@ -663,11 +671,14 @@ jobs:
         with:
           channel: ${{ inputs.exact_name }}
           candidate-id: ${{ needs.metadata.outputs.candidate_id }}
+          closure-identity-digest: ${{ matrix.closure_identity_digest }}
           release-version: ${{ needs.metadata.outputs.release_version }}
           closure-version: ${{ needs.metadata.outputs.closure_version }}
           shell-version: ${{ needs.metadata.outputs.shell_version }}
+          shell-identity-digest: ${{ matrix.shell_identity_digest }}
           amr-profile: ${{ inputs.amr_profile || 'test' }}
           phase: finish
+          proof-state: ${{ matrix.proof_state }}
           publish: "true"
           release-public-origin: ${{ inputs.release_public_origin }}
           sign-mode: unsigned
