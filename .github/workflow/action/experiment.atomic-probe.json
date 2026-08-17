@@ -1,0 +1,14 @@
+{
+  "controlPaths": [],
+  "dependsOn": [],
+  "extraDigests": ["nonce"],
+  "hashPaths": [".github/scripts/workflow.ts"],
+  "outputs": [
+    {
+      "mediaType": "application/json",
+      "role": "proof",
+      "schemaVersion": 1
+    }
+  ],
+  "schemaVersion": 1
+}
