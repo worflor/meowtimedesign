@@ -1,6 +1,9 @@
 name: workflow-atomic-probe
 
 on:
+  push:
+    branches:
+      - feat/standalone-closure
   workflow_dispatch:
     inputs:
       nonce:
@@ -33,7 +36,7 @@ jobs:
       - name: Prepare probe inputs
         uses: actions/github-script@v8
         env:
-          PROBE_NONCE: ${{ inputs.nonce }}
+          PROBE_NONCE: ${{ inputs.nonce || 'branch-push' }}
         with:
           script: |
             const crypto = require("crypto");
