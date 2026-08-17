@@ -504,7 +504,7 @@ runs:
           --arg target "${{ inputs.target }}" \
           --slurpfile plan "${{ inputs.workflow-plan-path }}" \
           --slurpfile summary "$RUNNER_TEMP/release-report/${{ inputs.target }}/summary.json" \
-          '{plan: $plan[0], summary: $summary[0], target: $target}' > "$registration"
+          '{evidenceSource: "internal-smoke", plan: $plan[0], summary: $summary[0], target: $target}' > "$registration"
         pnpm exec tools-release workflow register-scenario-receipts --input "$registration"
     - name: Write ${{ inputs.target }} release report
       shell: bash

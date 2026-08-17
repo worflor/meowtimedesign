@@ -146,6 +146,7 @@ cli
       const registration = scenarioReceiptRegistrationInputSchema.parse(JSON.parse(readFileSync(resolve(options.input), "utf8")) as unknown);
       const { storageConfigFromEnv } = await import("./storage/common.ts");
       const registered = await registerScenarioReceipts({
+        evidenceSource: registration.evidenceSource,
         plan: registration.plan,
         storage: storageConfigFromEnv(),
         summary: registration.summary,

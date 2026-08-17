@@ -127,7 +127,8 @@ describe("desktop ReleaseWorkflow", () => {
     const scenarios = beta.nodes
       .filter((node) => node.effect === "proof" && node.inputs.semantic.releaseTarget === "win_x64")
       .map((node) => String(node.inputs.semantic.scenario));
-    const registered = await registerScenarioReceipts({
+    const registeredInternal = await registerScenarioReceipts({
+      evidenceSource: "internal-smoke",
       plan: beta,
       registerReceipt: async (_storage, receipt) => {
         receipts.push(receipt);
@@ -144,7 +145,27 @@ describe("desktop ReleaseWorkflow", () => {
       },
       target: "win_x64",
     });
-    expect(registered).toHaveLength(5);
+    expect(registeredInternal).toHaveLength(4);
+    expect(receipts).toHaveLength(4);
+    const registeredPublic = await registerScenarioReceipts({
+      evidenceSource: "public-acceptance",
+      plan: beta,
+      registerReceipt: async (_storage, receipt) => {
+        receipts.push(receipt);
+        return "created";
+      },
+      storage: {} as never,
+      summary: {
+        coldStart: {
+          schemaVersion: 1,
+          status: "success",
+          timing: { launchDurationMs: 100, readinessBudgetMs: 300_000, readinessDurationMs: 200, totalDurationMs: 300 },
+        },
+        timings: scenarios.map((step) => ({ lane: "shell", status: "success", step })),
+      },
+      target: "win_x64",
+    });
+    expect(registeredPublic).toHaveLength(1);
     expect(receipts).toHaveLength(5);
   });
 });

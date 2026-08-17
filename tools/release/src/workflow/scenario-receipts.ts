@@ -7,6 +7,7 @@ import { releaseWorkflowPlanSchema } from "./protocol.ts";
 import { registerReleaseWorkflowReceipt } from "./receipt-store.ts";
 
 export const scenarioReceiptRegistrationInputSchema = z.object({
+  evidenceSource: z.enum(["internal-smoke", "public-acceptance"]),
   plan: releaseWorkflowPlanSchema,
   summary: z.unknown(),
   target: z.enum(["mac_arm64", "mac_x64", "win_x64"]),
@@ -36,6 +37,7 @@ function transferableEvidence(summary: unknown, scenario: string): Record<string
 }
 
 export async function registerScenarioReceipts(input: Readonly<{
+  evidenceSource: "internal-smoke" | "public-acceptance";
   plan: unknown;
   registerReceipt?: typeof registerReleaseWorkflowReceipt;
   storage: StorageConfig;
@@ -48,6 +50,7 @@ export async function registerScenarioReceipts(input: Readonly<{
     node.effect === "proof"
     && node.decision === "execute"
     && node.inputs.semantic.releaseTarget === input.target
+    && (String(node.inputs.semantic.scenario).endsWith("shell-lifecycle") === (input.evidenceSource === "public-acceptance"))
   );
   const registered: string[] = [];
   for (const node of nodes) {

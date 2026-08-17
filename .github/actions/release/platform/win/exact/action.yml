@@ -366,6 +366,7 @@ runs:
       run: |
         $registration = Join-Path $env:RUNNER_TEMP "release-workflow\scenario-registration-win_x64.json"
         $body = @{
+          evidenceSource = "internal-smoke"
           plan = Get-Content -Raw "${{ inputs.workflow-plan-path }}" | ConvertFrom-Json
           summary = Get-Content -Raw (Join-Path $env:RUNNER_TEMP "release-report\win_x64\summary.json") | ConvertFrom-Json
           target = "win_x64"

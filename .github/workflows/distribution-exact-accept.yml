@@ -111,6 +111,12 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Download canonical workflow plan for receipt registration
+        if: ${{ inputs.workflow_plan_artifact != '' }}
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.workflow_plan_artifact }}
+          path: ${{ runner.temp }}/release-workflow
       - name: Re-download immutable public ${{ matrix.target }} artifacts
         env:
           RELEASE_METADATA_URL: ${{ inputs.metadata_url }}
@@ -147,6 +153,29 @@ jobs:
           RELEASE_PUBLIC_ACCEPTANCE_SMOKE_SUMMARY_PATH: ${{ runner.temp }}/public-feedback/report/summary.json
           RELEASE_PUBLIC_ACCEPTANCE_SUITE_RESULT_PATH: ${{ runner.temp }}/public-feedback/report/suite-result.json
         run: pnpm exec tools-release issue-public-acceptance
+      - name: Prepare public lifecycle receipt registration
+        if: ${{ inputs.workflow_plan_artifact != '' }}
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require("fs");
+            const path = require("path");
+            const root = process.env.RUNNER_TEMP;
+            const registration = {
+              evidenceSource: "public-acceptance",
+              plan: JSON.parse(fs.readFileSync(path.join(root, "release-workflow", "plan.json"), "utf8")),
+              summary: JSON.parse(fs.readFileSync(path.join(root, "public-feedback", "report", "summary.json"), "utf8")),
+              target: "${{ matrix.target }}",
+            };
+            const output = path.join(root, "release-workflow", `public-registration-${registration.target}.json`);
+            fs.writeFileSync(output, `${JSON.stringify(registration, null, 2)}\n`);
+      - name: Upload accepted public ${{ matrix.target }} lifecycle registration
+        if: ${{ inputs.workflow_plan_artifact != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: open-design-${{ inputs.exact_name }}-${{ matrix.target }}-lifecycle-registration
+          path: ${{ runner.temp }}/release-workflow/public-registration-${{ matrix.target }}.json
+          if-no-files-found: error
       - name: Upload public ${{ matrix.target }} acceptance credential
         uses: actions/upload-artifact@v7
         with:
@@ -204,6 +233,26 @@ jobs:
           pattern: open-design-${{ inputs.exact_name }}-*-public-acceptance
           merge-multiple: true
           path: ${{ runner.temp }}/public-acceptance
+      - name: Download accepted public lifecycle registrations
+        if: ${{ inputs.acceptance_matrix != '{"include":[]}' }}
+        uses: actions/download-artifact@v8
+        with:
+          pattern: open-design-${{ inputs.exact_name }}-*-lifecycle-registration
+          merge-multiple: true
+          path: ${{ runner.temp }}/release-workflow/public-registrations
+      - name: Register accepted public lifecycle receipts
+        if: ${{ inputs.acceptance_matrix != '{"include":[]}' }}
+        env:
+          RELEASE_STORAGE_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_RELEASES_AK }}
+          RELEASE_STORAGE_BUCKET: ${{ secrets.CLOUDFLARE_R2_RELEASES_BUCKET }}
+          RELEASE_STORAGE_ENDPOINT: ${{ secrets.CLOUDFLARE_R2_RELEASES_URL }}
+          RELEASE_STORAGE_REGION: auto
+          RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_RELEASES_SK }}
+        run: |
+          set -euo pipefail
+          for registration in "$RUNNER_TEMP"/release-workflow/public-registrations/*.json; do
+            pnpm exec tools-release workflow register-scenario-receipts --input "$registration"
+          done
       - name: Attest replayed lifecycle proofs against this public projection
         if: ${{ inputs.attest_targets != '[]' }}
         env:

@@ -2372,6 +2372,9 @@ process.stdin.on("end", () => {
     expect(distribution).toContain('"target":"mac_x64"');
     expect(distribution).toContain('"target":"win_x64"');
     expect(distribution).toContain("Issue public ${{ matrix.target }} acceptance credential");
+    expect(distribution).toContain('evidenceSource: "public-acceptance"');
+    expect(distribution).toContain("Upload accepted public ${{ matrix.target }} lifecycle registration");
+    expect(distribution).toContain("Register accepted public lifecycle receipts");
     expect(distribution).toContain("workflow attest-public-target");
   });
 
