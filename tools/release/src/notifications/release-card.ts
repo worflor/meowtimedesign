@@ -2,16 +2,23 @@ import { readFileSync } from "node:fs";
 
 import type { FeishuCard } from "./feishu-client.ts";
 import { releaseChannelDisplayLabel } from "./release-channel.ts";
-import { loadReleaseRunFailures, type ReleaseRunFailure } from "./run-diagnostics.ts";
+import {
+  loadReleaseRunContext,
+  loadReleaseRunFailures,
+  type ReleaseRunContext,
+  type ReleaseRunFailure,
+} from "./run-diagnostics.ts";
 
 type JsonRecord = Record<string, unknown>;
 type FeishuElement = Record<string, unknown>;
 
 export type ReleaseNotificationInput = {
+  actor: string;
   branch: string;
   channel: string;
   changelogFile: string;
   commit: string;
+  eventName: string;
   macArm64Smoke: string;
   macArm64Url: string;
   macX64Smoke: string;
@@ -22,11 +29,15 @@ export type ReleaseNotificationInput = {
   releaseResult: string;
   releaseState: string;
   repository: string;
+  runAttempt: string;
+  runNumber: string;
   runUrl: string;
   stream: string;
   version: string;
   winX64Smoke: string;
   winX64Url: string;
+  triggeringActor: string;
+  workflowName: string;
 };
 
 type ColdStartDetail = {
@@ -45,6 +56,7 @@ type ColdStartDetail = {
 
 export type ReleaseNotificationDetails = {
   coldStarts: ColdStartDetail[];
+  execution: ReleaseRunContext | null;
   failures: ReleaseRunFailure[];
   warnings: string[];
 };
@@ -140,8 +152,20 @@ export async function loadReleaseNotificationDetails(
 ): Promise<ReleaseNotificationDetails> {
   const state = notificationState(input);
   const smokeFailed = [input.macArm64Smoke, input.macX64Smoke, input.winX64Smoke].includes("failure");
+  let execution: ReleaseRunContext | null = null;
+  try {
+    execution = await loadReleaseRunContext({
+      fetchImpl,
+      repository: input.repository,
+      runUrl: input.runUrl,
+      token: githubToken,
+    });
+  } catch {
+    // Execution metadata is presentational. A GitHub API outage must not turn a
+    // successful release card into a warning or change the release outcome.
+  }
   if (!["failed", "partial"].includes(state) && !smokeFailed) {
-    return { coldStarts: [], failures: [], warnings: [] };
+    return { coldStarts: [], execution, failures: [], warnings: [] };
   }
   const warnings: string[] = [];
   let coldStarts: ColdStartDetail[] = [];
@@ -174,7 +198,7 @@ export async function loadReleaseNotificationDetails(
       warnings.push(`未能读取失败步骤：${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  return { coldStarts, failures, warnings };
+  return { coldStarts, execution, failures, warnings };
 }
 
 function bytes(value: number): string {
@@ -183,6 +207,41 @@ function bytes(value: number): string {
 
 function seconds(value: number): string {
   return `${(value / 1_000).toFixed(1)}s`;
+}
+
+function duration(value: number): string {
+  const totalSeconds = Math.max(0, Math.round(value / 1_000));
+  const hours = Math.floor(totalSeconds / 3_600);
+  const minutes = Math.floor((totalSeconds % 3_600) / 60);
+  const seconds = totalSeconds % 60;
+  return [hours > 0 ? `${hours}h` : "", minutes > 0 ? `${minutes}m` : "", `${seconds}s`]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function actorMarkdown(actor: string): string {
+  const escaped = escapeMarkdown(actor);
+  return actor.length > 0
+    ? `[@${escaped}](https://github.com/${encodeURIComponent(actor)})`
+    : "未知";
+}
+
+function triggerLabel(eventName: string): string {
+  return {
+    push: "Push",
+    repository_dispatch: "外部调度",
+    schedule: "定时",
+    workflow_call: "复用工作流",
+    workflow_dispatch: "手动",
+    workflow_run: "上游工作流",
+  }[eventName] ?? (eventName.length > 0 ? eventName : "未知");
+}
+
+function releaseModeLabel(mode: string): string {
+  if (mode === "candidate") return "publish=false · 公开候选 / 无 latest 入口";
+  if (["false", "metadata", "prepublish", "validation"].includes(mode)) return "publish=false · 内部验证";
+  if (mode === "promote") return "publish=true · 晋升 latest";
+  return "publish=true · 不晋升";
 }
 
 function targetLabel(target: string): string {
@@ -246,7 +305,7 @@ export function buildReleaseFeishuCard(
   const warning = state === "partial" || smokeFailures.length > 0 || details.warnings.length > 0;
   const icon = state === "failed" ? "🚨" : state === "validation" ? "🧪" : state === "candidate" ? "📦" : warning ? "⚠️" : "🚀";
   const stateLabel = {
-    candidate: warning ? "候选就绪（有告警）" : "候选就绪 · 未公开入口",
+    candidate: warning ? "候选就绪（有告警）" : "候选就绪 · 公开下载 / 无 latest 入口",
     failed: "发布失败",
     partial: "部分完成",
     promoted: warning ? "发布并晋升完成（有告警）" : "发布并晋升完成",
@@ -255,6 +314,35 @@ export function buildReleaseFeishuCard(
   }[state];
   const shortCommit = input.commit.slice(0, 7);
   const fields: FeishuElement[] = [];
+  const rerunActor = input.triggeringActor.length > 0 && input.triggeringActor !== input.actor
+    ? ` · 重跑 ${actorMarkdown(input.triggeringActor)}`
+    : "";
+  fields.push({
+    is_short: true,
+    text: { tag: "lark_md", content: `**触发者**\n${actorMarkdown(input.actor)}${rerunActor}` },
+  });
+  fields.push({
+    is_short: true,
+    text: { tag: "lark_md", content: `**触发方式**\n${escapeMarkdown(triggerLabel(input.eventName))}` },
+  });
+  fields.push({
+    is_short: true,
+    text: { tag: "lark_md", content: `**发布模式**\n${releaseModeLabel(input.releaseMode)}` },
+  });
+  if (input.runNumber.length > 0) {
+    const attempt = Number.parseInt(input.runAttempt, 10);
+    const attemptLabel = Number.isSafeInteger(attempt) && attempt > 1 ? ` · 第 ${attempt} 次执行` : "";
+    const runLabel = `${input.workflowName || "Workflow"} #${input.runNumber}${attemptLabel}`;
+    fields.push({
+      is_short: true,
+      text: {
+        tag: "lark_md",
+        content: input.runUrl.length > 0
+          ? `**执行**\n[${escapeMarkdown(runLabel)}](${input.runUrl})`
+          : `**执行**\n${escapeMarkdown(runLabel)}`,
+      },
+    });
+  }
   if (input.branch.length > 0) fields.push({
     is_short: true,
     text: { tag: "lark_md", content: `**分支**\n${escapeMarkdown(input.branch)}` },
@@ -266,6 +354,17 @@ export function buildReleaseFeishuCard(
       content: input.repository.length > 0
         ? `**提交**\n[${shortCommit}](https://github.com/${input.repository}/commit/${input.commit})`
         : `**提交**\n${shortCommit}`,
+    },
+  });
+  if (details.execution != null && details.execution.durationMs > 0) fields.push({
+    is_short: true,
+    text: { tag: "lark_md", content: `**耗时**\n${duration(details.execution.durationMs)}` },
+  });
+  if (details.execution?.pullRequest != null) fields.push({
+    is_short: true,
+    text: {
+      tag: "lark_md",
+      content: `**关联 PR**\n[#${details.execution.pullRequest.number}](${details.execution.pullRequest.url})`,
     },
   });
   const elements: FeishuElement[] = fields.length > 0

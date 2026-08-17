@@ -174,9 +174,11 @@ jobs:
     if: ${{ always() && !cancelled() }}
     uses: ./.github/workflows/release-notify.yml
     with:
+      actor: ${{ github.actor }}
       branch: ${{ needs.distribute.outputs.branch }}
       channel: stable
       commit: ${{ needs.distribute.outputs.commit }}
+      event_name: ${{ github.event_name }}
       mac_arm64_url: ${{ needs.distribute.outputs.mac_arm64_url }}
       mac_x64_url: ${{ needs.distribute.outputs.mac_intel_url }}
       metadata_url: ${{ needs.distribute.outputs.version_metadata_url || needs.distribute.outputs.candidate_manifest_url }}
@@ -184,7 +186,11 @@ jobs:
       previous_commit: ${{ needs.distribute.outputs.previous_commit }}
       release_mode: ${{ inputs.publish && (inputs.promote && 'promote' || 'publish') || 'candidate' }}
       release_result: ${{ needs.distribute.result }}
+      run_attempt: ${{ github.run_attempt }}
+      run_number: ${{ github.run_number }}
+      triggering_actor: ${{ github.triggering_actor }}
       version: ${{ needs.distribute.outputs.release_version }}
       win_x64_url: ${{ needs.distribute.outputs.win_url }}
+      workflow_name: ${{ github.workflow }}
     secrets:
       bot: ${{ secrets.RELEASE_FEISHU_STABLE }}

@@ -3,6 +3,10 @@ name: release-notify
 on:
   workflow_call:
     inputs:
+      actor:
+        required: false
+        type: string
+        default: ""
       branch:
         required: false
         type: string
@@ -11,6 +15,10 @@ on:
         required: true
         type: string
       commit:
+        required: false
+        type: string
+        default: ""
+      event_name:
         required: false
         type: string
         default: ""
@@ -53,6 +61,18 @@ on:
         required: false
         type: string
         default: complete
+      run_attempt:
+        required: false
+        type: string
+        default: ""
+      run_number:
+        required: false
+        type: string
+        default: ""
+      triggering_actor:
+        required: false
+        type: string
+        default: ""
       version:
         required: false
         type: string
@@ -62,6 +82,10 @@ on:
         type: string
         default: ""
       win_x64_url:
+        required: false
+        type: string
+        default: ""
+      workflow_name:
         required: false
         type: string
         default: ""
@@ -113,10 +137,12 @@ jobs:
         id: post
         continue-on-error: true
         env:
+          RELEASE_ACTOR: ${{ inputs.actor }}
           RELEASE_BRANCH: ${{ inputs.branch }}
           RELEASE_CHANNEL: ${{ inputs.channel }}
           RELEASE_CHANGELOG_FILE: ${{ steps.changelog.outputs.path }}
           RELEASE_COMMIT: ${{ inputs.commit }}
+          RELEASE_EVENT_NAME: ${{ inputs.event_name }}
           RELEASE_FEISHU_BOT: ${{ secrets.bot }}
           RELEASE_GITHUB_TOKEN: ${{ github.token }}
           RELEASE_MAC_ARM64_SMOKE: ${{ inputs.mac_arm64_smoke }}
@@ -129,11 +155,15 @@ jobs:
           RELEASE_PREVIOUS_COMMIT: ${{ inputs.previous_commit }}
           RELEASE_REPOSITORY: ${{ github.repository }}
           RELEASE_RESULT: ${{ inputs.release_result }}
+          RELEASE_RUN_ATTEMPT: ${{ inputs.run_attempt }}
+          RELEASE_RUN_NUMBER: ${{ inputs.run_number }}
           RELEASE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RELEASE_STATE: ${{ inputs.release_state }}
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_WIN_X64_SMOKE: ${{ inputs.win_x64_smoke }}
           RELEASE_WIN_X64_URL: ${{ inputs.win_x64_url }}
+          RELEASE_TRIGGERING_ACTOR: ${{ inputs.triggering_actor }}
+          RELEASE_WORKFLOW_NAME: ${{ inputs.workflow_name }}
         run: node --experimental-strip-types tools/release/src/notifications/feishu.ts
 
       - name: Warn when Feishu delivery fails

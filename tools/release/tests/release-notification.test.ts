@@ -14,10 +14,12 @@ import {
 
 function input(overrides: Partial<ReleaseNotificationInput> = {}): ReleaseNotificationInput {
   return {
+    actor: "alice",
     branch: "feat/standalone-closure",
     channel: "beta",
     changelogFile: "",
     commit: "0123456789abcdef0123456789abcdef01234567",
+    eventName: "workflow_dispatch",
     macArm64Smoke: "success",
     macArm64Url: "https://releases.example/mac-arm64.dmg",
     macX64Smoke: "success",
@@ -28,11 +30,15 @@ function input(overrides: Partial<ReleaseNotificationInput> = {}): ReleaseNotifi
     releaseResult: "success",
     releaseState: "complete",
     repository: "nexu-io/open-design",
+    runAttempt: "1",
+    runNumber: "123",
     runUrl: "https://github.com/nexu-io/open-design/actions/runs/1",
     stream: "release",
     version: "0.19.1-beta.4",
     winX64Smoke: "success",
     winX64Url: "https://releases.example/win.exe",
+    triggeringActor: "alice",
+    workflowName: "release-beta",
     ...overrides,
   };
 }
@@ -61,6 +67,7 @@ function metadata() {
 
 const emptyDetails = {
   coldStarts: [],
+  execution: null,
   failures: [],
   warnings: [],
 };
@@ -111,18 +118,41 @@ describe("release Feishu notification", () => {
       "chore: hidden sixth change (6666666)",
     ].join("\n"));
     try {
-      const details = await loadReleaseNotificationDetails(input(), () => {
-        throw new Error("successful notification must not fetch diagnostics");
-      });
-      const card = buildReleaseFeishuCard(input({ changelogFile }), details);
+      const details = await loadReleaseNotificationDetails(input(), (async (request: string | URL | Request) => {
+        expect(String(request)).toContain("/actions/runs/1");
+        return Response.json({
+          created_at: "2026-08-17T03:45:00Z",
+          pull_requests: [{ number: 6956 }],
+          run_started_at: "2026-08-17T03:45:00Z",
+        });
+      }) as typeof fetch, "github-token");
+      const card = buildReleaseFeishuCard(input({ changelogFile, releaseMode: "promote" }), details);
       const serialized = JSON.stringify(card);
       expect(card.header).toMatchObject({ template: "green" });
-      expect(details).toEqual(emptyDetails);
+      expect(details).toEqual({
+        coldStarts: [],
+        execution: expect.objectContaining({
+          durationMs: expect.any(Number),
+          pullRequest: {
+            number: 6956,
+            url: "https://github.com/nexu-io/open-design/pull/6956",
+          },
+        }),
+        failures: [],
+        warnings: [],
+      });
       expect(serialized).toContain("feat/standalone-closure");
       expect(serialized).toContain("[0123456](https://github.com/nexu-io/open-design/commit/");
       expect(serialized).not.toContain("`0123456`");
       expect(serialized).not.toContain("渠道");
-      expect(serialized).not.toContain("触发");
+      expect(serialized).toContain("触发者");
+      expect(serialized).toContain("[@alice](https://github.com/alice)");
+      expect(serialized).toContain("手动");
+      expect(serialized).toContain("publish=true · 晋升 latest");
+      expect(serialized).toContain("release-beta #123");
+      expect(serialized).toContain("关联 PR");
+      expect(serialized).toContain("[#6956](https://github.com/nexu-io/open-design/pull/6956)");
+      expect(serialized).toContain("耗时");
       expect(serialized).not.toContain("Closure 冷启动");
       expect(serialized).not.toContain("hidden sixth change");
       expect(serialized).toContain("Mac Arm");
@@ -164,13 +194,15 @@ describe("release Feishu notification", () => {
     expect(releaseNotificationInternals.notificationState(input())).toBe("published");
     expect(releaseNotificationInternals.notificationState(input({ releaseMode: "promote" }))).toBe("promoted");
     expect(releaseNotificationInternals.notificationState(input({ releaseMode: "candidate" }))).toBe("candidate");
-    expect(JSON.stringify(buildReleaseFeishuCard(input({ releaseMode: "candidate" }), emptyDetails)))
-      .toContain("distribution-exact-accept.yml");
+    const candidate = JSON.stringify(buildReleaseFeishuCard(input({ releaseMode: "candidate" }), emptyDetails));
+    expect(candidate).toContain("distribution-exact-accept.yml");
+    expect(candidate).toContain("publish=false · 公开候选 / 无 latest 入口");
     expect(releaseNotificationInternals.notificationState(input({ releaseState: "partial" }))).toBe("partial");
     expect(releaseNotificationInternals.notificationState(input({ releaseResult: "failure" }))).toBe("failed");
     expect(releaseNotificationInternals.notificationState(input({ releaseMode: "prepublish" }))).toBe("validation");
     const card = buildReleaseFeishuCard(input({ winX64Smoke: "failure" }), {
       coldStarts: [],
+      execution: null,
       failures: [],
       warnings: [],
     });
@@ -186,5 +218,13 @@ describe("release Feishu notification", () => {
       .toContain("Qa2 0.19.1-qa2.1");
     expect(() => buildReleaseFeishuCard(input({ channel: "Preview-2" }), emptyDetails))
       .toThrow("unsupported release notification channel");
+  });
+
+  it("distinguishes the original actor from a rerun operator", () => {
+    const card = buildReleaseFeishuCard(input({ runAttempt: "2", triggeringActor: "bob" }), emptyDetails);
+    const serialized = JSON.stringify(card);
+    expect(serialized).toContain("[@alice](https://github.com/alice)");
+    expect(serialized).toContain("重跑 [@bob](https://github.com/bob)");
+    expect(serialized).toContain("第 2 次执行");
   });
 });

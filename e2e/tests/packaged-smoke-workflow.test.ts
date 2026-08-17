@@ -2331,11 +2331,19 @@ process.stdin.on("end", () => {
       expect(notifyJob, channel).toContain("if: ${{ always() && !cancelled() }}");
       expect(notifyJob, channel).toContain(channel === "exact" ? "channel: ${{ inputs.exact_name }}" : `channel: ${channel}`);
       expect(notifyJob, channel).toContain(`secrets.${secret}`);
+      expect(notifyJob, channel).toContain("actor: ${{ github.actor }}");
+      expect(notifyJob, channel).toContain("event_name: ${{ github.event_name }}");
+      expect(notifyJob, channel).toContain("run_attempt: ${{ github.run_attempt }}");
+      expect(notifyJob, channel).toContain("run_number: ${{ github.run_number }}");
+      expect(notifyJob, channel).toContain("triggering_actor: ${{ github.triggering_actor }}");
+      expect(notifyJob, channel).toContain("workflow_name: ${{ github.workflow }}");
       for (const [, , otherSecret] of entries) {
         if (otherSecret !== secret) expect(notifyJob, channel).not.toContain(otherSecret);
       }
     }
     expect(notifyCapability).toContain("RELEASE_FEISHU_BOT: ${{ secrets.bot }}");
+    expect(notifyCapability).toContain("RELEASE_ACTOR: ${{ inputs.actor }}");
+    expect(notifyCapability).toContain("RELEASE_TRIGGERING_ACTOR: ${{ inputs.triggering_actor }}");
     expect(notifyCapability).toContain("continue-on-error: true");
     expect(notifyCapability).toContain("Feishu release notification failed after notifier retries");
     expect(notifyCapability).toContain("tools/release/src/notifications/feishu.ts");

@@ -772,9 +772,11 @@ jobs:
     if: ${{ always() && !cancelled() }}
     uses: ./.github/workflows/release-notify.yml
     with:
+      actor: ${{ github.actor }}
       branch: ${{ needs.metadata.outputs.branch }}
       channel: ${{ inputs.exact_name }}
       commit: ${{ needs.metadata.outputs.commit }}
+      event_name: ${{ github.event_name }}
       mac_arm64_smoke: ${{ needs.stage.outputs.mac_arm64_smoke_result }}
       mac_arm64_url: ${{ !inputs.publish && needs.candidate.outputs.mac_arm64_url || needs.stage.outputs.mac_arm64_url }}
       mac_x64_smoke: ${{ needs.stage.outputs.mac_x64_smoke_result }}
@@ -785,8 +787,12 @@ jobs:
       release_mode: ${{ inputs.publish && (inputs.promote && 'promote' || 'publish') || 'candidate' }}
       release_result: ${{ needs.accept.result != 'skipped' && needs.accept.result || needs.stage.result != 'skipped' && needs.stage.result || needs.build.result }}
       release_state: ${{ needs.accept.result == 'success' && 'complete' || needs.stage.outputs.release_state || (needs.build.result == 'success' && 'partial' || 'failed') }}
+      run_attempt: ${{ github.run_attempt }}
+      run_number: ${{ github.run_number }}
+      triggering_actor: ${{ github.triggering_actor }}
       version: ${{ needs.metadata.outputs.release_version }}
       win_x64_smoke: ${{ needs.stage.outputs.win_x64_smoke_result }}
       win_x64_url: ${{ !inputs.publish && needs.candidate.outputs.win_x64_url || needs.stage.outputs.win_x64_url }}
+      workflow_name: ${{ github.workflow }}
     secrets:
       bot: ${{ secrets.RELEASE_FEISHU_BETA }}

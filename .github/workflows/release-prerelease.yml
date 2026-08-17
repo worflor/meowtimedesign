@@ -202,9 +202,11 @@ jobs:
     if: ${{ always() && !cancelled() }}
     uses: ./.github/workflows/release-notify.yml
     with:
+      actor: ${{ github.actor }}
       branch: ${{ needs.distribute.outputs.branch }}
       channel: prerelease
       commit: ${{ needs.distribute.outputs.commit }}
+      event_name: ${{ github.event_name }}
       mac_arm64_smoke: ${{ needs.distribute.outputs.mac_arm64_smoke_result }}
       mac_arm64_url: ${{ needs.distribute.outputs.mac_arm64_url }}
       mac_x64_smoke: ${{ needs.distribute.outputs.mac_x64_smoke_result }}
@@ -214,8 +216,12 @@ jobs:
       notification_stream: ${{ inputs.notification_stream }}
       previous_commit: ${{ needs.distribute.outputs.previous_commit }}
       release_result: ${{ needs.distribute.result }}
+      run_attempt: ${{ github.run_attempt }}
+      run_number: ${{ github.run_number }}
+      triggering_actor: ${{ github.triggering_actor }}
       version: ${{ needs.distribute.outputs.release_version }}
       win_x64_smoke: ${{ needs.distribute.outputs.win_x64_smoke_result }}
       win_x64_url: ${{ needs.distribute.outputs.win_url }}
+      workflow_name: ${{ github.workflow }}
     secrets:
       bot: ${{ secrets.RELEASE_FEISHU_PRERELEASE }}

@@ -16,6 +16,14 @@ export type ReleaseRunFailure = {
   url: string;
 };
 
+export type ReleaseRunContext = {
+  durationMs: number;
+  pullRequest: {
+    number: number;
+    url: string;
+  } | null;
+};
+
 const FAILED_CONCLUSIONS = new Set([
   "action_required",
   "failure",
@@ -37,6 +45,55 @@ function runId(runUrl: string): string | null {
   }
 }
 
+function githubHeaders(token: string): Record<string, string> {
+  return {
+    accept: "application/vnd.github+json",
+    authorization: `Bearer ${token}`,
+    "user-agent": "open-design-release-notifier",
+    "x-github-api-version": "2022-11-28",
+  };
+}
+
+export async function loadReleaseRunContext(input: {
+  fetchImpl?: typeof fetch;
+  now?: number;
+  repository: string;
+  runUrl: string;
+  token: string;
+}): Promise<ReleaseRunContext | null> {
+  const id = runId(input.runUrl);
+  if (id == null || input.repository.length === 0 || input.token.length === 0) return null;
+  const response = await (input.fetchImpl ?? fetch)(
+    `https://api.github.com/repos/${input.repository}/actions/runs/${id}`,
+    { headers: githubHeaders(input.token) },
+  );
+  if (!response.ok) throw new Error(`GitHub Actions run HTTP ${response.status}`);
+  const payload = await response.json() as {
+    created_at?: unknown;
+    pull_requests?: unknown;
+    run_started_at?: unknown;
+  };
+  const startedAt = text(payload.run_started_at) || text(payload.created_at);
+  const startedAtMs = Date.parse(startedAt);
+  const now = input.now ?? Date.now();
+  const durationMs = Number.isFinite(startedAtMs) ? Math.max(0, now - startedAtMs) : 0;
+  const pullRequests = Array.isArray(payload.pull_requests)
+    ? payload.pull_requests.flatMap((entry) => {
+      if (entry == null || typeof entry !== "object") return [];
+      const number = (entry as { number?: unknown }).number;
+      return typeof number === "number" && Number.isSafeInteger(number) && number > 0 ? [number] : [];
+    })
+    : [];
+  const uniquePullRequests = [...new Set(pullRequests)];
+  const pullRequest = uniquePullRequests.length === 1
+    ? {
+        number: uniquePullRequests[0]!,
+        url: `https://github.com/${input.repository}/pull/${uniquePullRequests[0]}`,
+      }
+    : null;
+  return { durationMs, pullRequest };
+}
+
 function failedStep(value: unknown): string {
   if (!Array.isArray(value)) return "";
   const steps = value as GitHubJobStep[];
@@ -55,10 +112,7 @@ export async function loadReleaseRunFailures(input: {
     `https://api.github.com/repos/${input.repository}/actions/runs/${id}/jobs?filter=latest&per_page=100`,
     {
       headers: {
-        accept: "application/vnd.github+json",
-        authorization: `Bearer ${input.token}`,
-        "user-agent": "open-design-release-notifier",
-        "x-github-api-version": "2022-11-28",
+        ...githubHeaders(input.token),
       },
     },
   );

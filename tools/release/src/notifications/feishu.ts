@@ -28,10 +28,12 @@ if (bot == null) {
     throw new Error(`unsupported release notification channel: ${channel}`);
   }
   const input: ReleaseNotificationInput = {
+    actor: optionalEnv("RELEASE_ACTOR"),
     branch: optionalEnv("RELEASE_BRANCH"),
     channel,
     changelogFile: optionalEnv("RELEASE_CHANGELOG_FILE"),
     commit: optionalEnv("RELEASE_COMMIT"),
+    eventName: optionalEnv("RELEASE_EVENT_NAME"),
     macArm64Smoke: optionalEnv("RELEASE_MAC_ARM64_SMOKE"),
     macArm64Url: optionalEnv("RELEASE_MAC_ARM64_URL"),
     macX64Smoke: optionalEnv("RELEASE_MAC_X64_SMOKE"),
@@ -42,11 +44,15 @@ if (bot == null) {
     releaseResult: optionalEnv("RELEASE_RESULT", "success"),
     releaseState: optionalEnv("RELEASE_STATE", "complete"),
     repository: optionalEnv("RELEASE_REPOSITORY"),
+    runAttempt: optionalEnv("RELEASE_RUN_ATTEMPT"),
+    runNumber: optionalEnv("RELEASE_RUN_NUMBER"),
     runUrl: optionalEnv("RELEASE_RUN_URL"),
     stream: optionalEnv("RELEASE_NOTIFICATION_STREAM", "release"),
     version: optionalEnv("RELEASE_VERSION"),
     winX64Smoke: optionalEnv("RELEASE_WIN_X64_SMOKE"),
     winX64Url: optionalEnv("RELEASE_WIN_X64_URL"),
+    triggeringActor: optionalEnv("RELEASE_TRIGGERING_ACTOR"),
+    workflowName: optionalEnv("RELEASE_WORKFLOW_NAME"),
   };
   const details = await loadReleaseNotificationDetails(
     input,
