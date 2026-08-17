@@ -97,7 +97,7 @@ outputs:
     value: ${{ steps.platform_outputs.outputs.dmg_url }}
   smoke_result:
     description: Packaged smoke outcome
-    value: ${{ steps.smoke_plan.outputs.decision == 'replay' && 'success' || steps.smoke.outcome }}
+    value: ${{ env.OD_RELEASE_EXACT_SMOKE_PROOF == 'hit' && 'success' || steps.smoke.outcome }}
 
 runs:
   using: composite
@@ -258,31 +258,16 @@ runs:
         public-origin: ${{ inputs.release-public-origin }}
         publish-enabled: "true"
         release-version: ${{ inputs.closure-version }}
-    - name: Resolve ${{ inputs.target }} smoke atom
-      id: smoke_plan
-      if: ${{ inputs.smoke-mode != 'skip' }}
-      uses: ./.github/actions/workflow/action/resolve
+    - name: Resolve ${{ inputs.target }} smoke hash
+      id: smoke_skip
+      if: ${{ inputs.phase != 'finish' && inputs.smoke-mode != 'skip' }}
+      uses: ./.github/actions/hash-skip
       env:
-        RELEASE_STORAGE_ACCESS_KEY_ID: ${{ env.CLOUDFLARE_R2_RELEASES_AK }}
-        RELEASE_STORAGE_BUCKET: ${{ env.CLOUDFLARE_R2_RELEASES_BUCKET }}
-        RELEASE_STORAGE_ENDPOINT: ${{ env.CLOUDFLARE_R2_RELEASES_URL }}
-        RELEASE_STORAGE_REGION: auto
-        RELEASE_STORAGE_SECRET_ACCESS_KEY: ${{ env.CLOUDFLARE_R2_RELEASES_SK }}
-        WORKFLOW_EXTRA_CHANNEL: ${{ inputs.channel }}
-        WORKFLOW_EXTRA_CLOSURE: ${{ inputs.closure-identity-digest }}
-        WORKFLOW_EXTRA_LEGACY_MIGRATION: ${{ inputs.legacy-migration-enabled }}
-        WORKFLOW_EXTRA_MATRIX: ${{ inputs.shell-smoke-matrix }}
-        WORKFLOW_EXTRA_NAMESPACE: ${{ inputs.namespace }}
-        WORKFLOW_EXTRA_PROTOCOL: "1"
-        WORKFLOW_EXTRA_SHELL: ${{ inputs.shell-identity-digest }}
-        WORKFLOW_EXTRA_SMOKE_LANES: ${{ inputs.smoke-mode == 'full' && inputs.smoke-lanes-on-miss || '' }}
-        WORKFLOW_EXTRA_SMOKE_PROFILE: ${{ inputs.smoke-mode }}
-        WORKFLOW_EXTRA_TARGET: ${{ inputs.target }}
-        WORKFLOW_EXTRA_UPDATE_METADATA: ${{ inputs.update-metadata-url }}
-        WORKFLOW_EXTRA_UPDATE_VERSION: ${{ inputs.update-target-version }}
+        HASH_SKIP_EXTRA_CLOSURE: ${{ inputs.closure-identity-digest }}
+        HASH_SKIP_EXTRA_SHELL: ${{ inputs.shell-identity-digest }}
       with:
-        key: release.smoke.mac
-        output: ${{ runner.temp }}/workflow-atoms/${{ inputs.target }}/plan.json
+        hash_skip: release.smoke.mac
+        mode: normal
     - name: Report ${{ inputs.target }} release reuse plan
       if: ${{ inputs.phase != 'finish' }}
       shell: bash
@@ -292,8 +277,8 @@ runs:
         RELEASE_OUTER_CACHE_MATCHED_KEY: ${{ steps.cache.outputs.cache-matched-key }}
         RELEASE_REUSE_PLAN_JSON_PATH: ${{ runner.temp }}/release-report/${{ inputs.target }}/reuse-plan.json
         RELEASE_SHELL_BUILD_STATE: ${{ steps.shell_resolution.outputs.state }}
-        RELEASE_SMOKE_PROOF_STATE: ${{ steps.smoke_plan.outputs.decision == 'replay' && 'hit' || 'miss' }}
-        RELEASE_SMOKE_SELECTED_LANES: ${{ inputs.smoke-mode == 'skip' && 'none' || (steps.smoke_plan.outputs.decision == 'replay' && 'none' || (inputs.smoke-mode == 'full' && inputs.smoke-lanes-on-miss != '' && inputs.smoke-lanes-on-miss || 'profile-default')) }}
+        RELEASE_SMOKE_PROOF_STATE: ${{ steps.smoke_skip.outputs.skip == 'true' && 'hit' || 'miss' }}
+        RELEASE_SMOKE_SELECTED_LANES: ${{ inputs.smoke-mode == 'skip' && 'none' || (steps.smoke_skip.outputs.skip == 'true' && 'none' || (inputs.smoke-mode == 'full' && inputs.smoke-lanes-on-miss != '' && inputs.smoke-lanes-on-miss || 'profile-default')) }}
         RELEASE_TARGET: ${{ inputs.target }}
       run: pnpm exec tools-release write-reuse-plan
     - name: Prepare ${{ inputs.target }} Standalone smoke graph
@@ -377,12 +362,13 @@ runs:
           echo "OD_RELEASE_EXACT_CACHE_PREFIX=${{ steps.cache.outputs.prefix }}"
           echo "OD_RELEASE_EXACT_SHELL_STATE=${{ steps.shell_resolution.outputs.state }}"
           echo "OD_RELEASE_EXACT_SHELL_VERSION=${{ steps.shell_resolution.outputs.shell_version }}"
-          echo "OD_RELEASE_EXACT_SMOKE_PROOF=${{ steps.smoke_plan.outputs.decision == 'replay' && 'hit' || 'miss' }}"
+          echo "OD_RELEASE_EXACT_SMOKE_PROOF=${{ steps.smoke_skip.outputs.skip == 'true' && 'hit' || 'miss' }}"
+          echo "OD_RELEASE_EXACT_SMOKE_RUN=${{ steps.smoke_skip.outputs.run }}"
         } >> "$GITHUB_ENV"
     - name: Build exact ${{ inputs.target }} update fixture
       shell: bash
       id: update_fixture
-      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode == 'full' && steps.smoke_plan.outputs.decision == 'execute' && inputs.update-metadata-url == '' && inputs.update-target-version == '' }}
+      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode == 'full' && env.OD_RELEASE_EXACT_SMOKE_RUN == 'true' && inputs.update-metadata-url == '' && inputs.update-target-version == '' }}
       run: |
         set -euo pipefail
         version="${{ inputs.release-version }}"
@@ -414,7 +400,7 @@ runs:
     - name: Materialize legacy ${{ inputs.target }} migration fixture
       shell: bash
       id: legacy_fixture
-      if: ${{ inputs.phase != 'prepare' && inputs.legacy-migration-enabled == 'true' && inputs.smoke-mode == 'full' && steps.smoke_plan.outputs.decision == 'execute' }}
+      if: ${{ inputs.phase != 'prepare' && inputs.legacy-migration-enabled == 'true' && inputs.smoke-mode == 'full' && env.OD_RELEASE_EXACT_SMOKE_RUN == 'true' }}
       env:
         RELEASE_PUBLIC_ORIGIN: ${{ inputs.release-public-origin != '' && inputs.release-public-origin || env.CLOUDFLARE_R2_RELEASES_PUBLIC_ORIGIN }}
       run: |
@@ -452,7 +438,7 @@ runs:
     - name: Smoke exact ${{ inputs.target }} packaged runtime
       shell: bash
       id: smoke
-      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode != 'skip' && steps.smoke_plan.outputs.decision == 'execute' }}
+      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode != 'skip' && env.OD_RELEASE_EXACT_SMOKE_RUN == 'true' }}
       working-directory: e2e
       env:
         OD_PACKAGED_E2E_BUILD_JSON_PATH: ${{ runner.temp }}/release-build/${{ inputs.target }}/build.json
@@ -479,20 +465,6 @@ runs:
         OD_PACKAGED_E2E_REPORT_DIR: ${{ runner.temp }}/release-report/${{ inputs.target }}
         OD_PACKAGED_E2E_TOOLS_PACK_DIR: ${{ runner.temp }}/tools-pack
       run: pnpm exec tsx scripts/release-smoke.ts mac specs/mac.spec.ts
-    - name: Replay ${{ inputs.target }} smoke summary
-      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode != 'skip' && steps.smoke_plan.outputs.decision == 'replay' }}
-      uses: ./.github/actions/workflow/plan/replay
-      with:
-        output-root: ${{ runner.temp }}/release-report/${{ inputs.target }}
-        plan: ${{ runner.temp }}/workflow-atoms/${{ inputs.target }}/plan.json
-    - name: Request ${{ inputs.target }} smoke receipt
-      if: ${{ inputs.phase != 'prepare' && inputs.smoke-mode != 'skip' && steps.smoke_plan.outputs.decision == 'execute' && steps.smoke.outcome == 'success' }}
-      uses: ./.github/actions/workflow/receipt/request
-      with:
-        artifact: workflow-receipt-release-smoke-${{ inputs.target }}
-        input-root: ${{ runner.temp }}/release-report/${{ inputs.target }}
-        plan: ${{ runner.temp }}/workflow-atoms/${{ inputs.target }}/plan.json
-        request-root: ${{ runner.temp }}/workflow-atoms/${{ inputs.target }}
     - name: Write ${{ inputs.target }} release report
       shell: bash
       if: ${{ always() && (inputs.phase != 'prepare' || failure()) }}
@@ -509,6 +481,7 @@ runs:
         RELEASE_TARGET: ${{ inputs.target }}
         RELEASE_VERSION: ${{ inputs.release-version }}
         REPORT_TITLE: ${{ inputs.target }} ${{ inputs.channel }} build
+        REPORT_STATUS: ${{ env.OD_RELEASE_EXACT_SMOKE_PROOF == 'hit' && 'success' || '' }}
       run: pnpm exec tools-release write-report
     - name: Publish ${{ inputs.target }} report summary
       shell: bash

@@ -71,7 +71,7 @@ const bakePreviewsReleaseWorkflowPath = join(
 const finalizeReleaseWorkflowPath = join(workspaceRoot, ".github", "workflows", "finalize-release.yml");
 const handoffScriptPath = join(workspaceRoot, ".github", "scripts", "handoff.py");
 const releaseBetaWorkflowPath = join(workspaceRoot, ".github", "workflows", "release-beta.yml");
-const workflowReceiptFinalizePath = join(workspaceRoot, ".github", "workflows", "workflow-receipt-finalize.yml");
+const hashSkipActionPath = join(workspaceRoot, ".github", "actions", "hash-skip", "action.yml");
 const distributionBetaWorkflowPath = releaseBetaWorkflowPath;
 const betaMacDistributionActionPath = join(
   workspaceRoot,
@@ -511,32 +511,25 @@ async function renderFeishuBuildCard(env: Record<string, string>): Promise<Recor
 }
 
 describe("packaged smoke workflow", () => {
-  it("[P1] keeps workflow receipt signing on the trusted default-branch controller", async () => {
-    const [ci, finalizer, mac, win] = await Promise.all([
+  it("[P1] keeps hash skip business-neutral and success-bound", async () => {
+    const [ci, hashSkip, mac, win] = await Promise.all([
       readFile(ciWorkflowPath, "utf8"),
-      readFile(workflowReceiptFinalizePath, "utf8"),
+      readFile(hashSkipActionPath, "utf8"),
       readFile(betaMacDistributionActionPath, "utf8"),
       readFile(betaWinDistributionActionPath, "utf8"),
     ]);
 
-    expect(ci).toContain("node --experimental-strip-types .github/scripts/workflow.ts self-check");
-    expect(finalizer).toContain("workflow_run:");
-    expect(finalizer).toContain("workflows: [release-beta]");
-    expect(finalizer).toContain("github.event.workflow_run.conclusion == 'success'");
-    expect(finalizer).toContain("fetch-depth: 0");
-    expect(finalizer).toContain(".github/scripts/workflow.ts finalize-run");
-    expect(finalizer).not.toContain("actions/checkout@v6\n        with:\n          ref:");
+    expect(ci).toContain("node --experimental-strip-types .github/scripts/hash_skip.ts self-check");
+    expect(hashSkip).toContain("uses: actions/cache@v5.0.5");
+    expect(hashSkip).toContain("lookup-only: true");
+    expect(hashSkip).not.toContain("restore-keys:");
     for (const action of [mac, win]) {
-      expect(action).toContain("uses: ./.github/actions/workflow/action/resolve");
-      expect(action).toContain("uses: ./.github/actions/workflow/plan/replay");
-      expect(action).toContain("uses: ./.github/actions/workflow/receipt/request");
-      expect(action).not.toContain(".github/scripts/workflow.ts");
-      expect(action).toContain("WORKFLOW_EXTRA_SMOKE_PROFILE: ${{ inputs.smoke-mode }}");
-      expect(action).toContain("WORKFLOW_EXTRA_UPDATE_METADATA: ${{ inputs.update-metadata-url }}");
-      expect(action).toContain("WORKFLOW_EXTRA_UPDATE_VERSION: ${{ inputs.update-target-version }}");
+      expect(action).toContain("uses: ./.github/actions/hash-skip");
+      expect(action).toContain("HASH_SKIP_EXTRA_CLOSURE: ${{ inputs.closure-identity-digest }}");
+      expect(action).toContain("HASH_SKIP_EXTRA_SHELL: ${{ inputs.shell-identity-digest }}");
+      expect(action).not.toContain("actions/workflow");
+      expect(action).not.toContain("workflow-receipt");
     }
-    expect(mac).toContain("WORKFLOW_EXTRA_SMOKE_LANES:");
-    expect(mac).toContain("WORKFLOW_EXTRA_LEGACY_MIGRATION: ${{ inputs.legacy-migration-enabled }}");
   });
 
   it("[P2] keeps packaged smoke outside the main CI gate", async () => {
@@ -2284,13 +2277,13 @@ process.stdin.on("end", () => {
     expect(buildJob).toContain("id: mac");
     expect(buildJob).toContain("id: win");
     expect(buildJob).toContain("open-design-${{ inputs.exact_name }}-${{ matrix.target }}-build-result");
-    expect(betaMacAction).toContain("value: ${{ steps.smoke_plan.outputs.decision == 'replay' && 'success' || steps.smoke.outcome }}");
+    expect(betaMacAction).toContain("value: ${{ env.OD_RELEASE_EXACT_SMOKE_PROOF == 'hit' && 'success' || steps.smoke.outcome }}");
     expect(betaMacAction).toContain("value: ${{ steps.platform_outputs.outputs.dmg_url }}");
     expect(betaMacAction).toContain("id: smoke");
     expect(betaMacAction).toContain("continue-on-error: true");
     expect(betaMacAction).toContain("id: platform_outputs");
 
-    expect(betaWinAction).toContain("value: ${{ steps.smoke_plan.outputs.decision == 'replay' && 'success' || steps.win_x64_smoke.outcome }}");
+    expect(betaWinAction).toContain("value: ${{ env.OD_RELEASE_EXACT_SMOKE_PROOF == 'hit' && 'success' || steps.win_x64_smoke.outcome }}");
     expect(betaWinAction).toContain("value: ${{ steps.win_x64_platform_outputs.outputs.installer_url }}");
     expect(betaWinAction).toContain("id: win_x64_smoke");
     expect(betaWinAction).toContain("continue-on-error: true");
@@ -3028,8 +3021,8 @@ process.stdin.on("end", () => {
     expect(betaMacAction).toContain("tools-release merge-closure-distribution");
     expect(buildJob).toContain("needs.metadata.outputs.closure_version");
     expect(betaMacAction).toContain("OD_PACKAGED_E2E_CLOSURE_DISTRIBUTION_MANIFEST_PATH:");
-    expect(betaMacAction).toContain("OD_RELEASE_EXACT_SMOKE_PROOF=${{ steps.smoke_plan.outputs.decision == 'replay' && 'hit' || 'miss' }}");
-    expect(betaMacAction).toContain("uses: ./.github/actions/workflow/receipt/request");
+    expect(betaMacAction).toContain("OD_RELEASE_EXACT_SMOKE_PROOF=${{ steps.smoke_skip.outputs.skip == 'true' && 'hit' || 'miss' }}");
+    expect(betaMacAction).toContain("uses: ./.github/actions/hash-skip");
     expect(betaMacAction).not.toContain("workflow register-scenario-receipts");
     expect(betaMacAction).toContain("OD_PACKAGED_E2E_CLOSURE_BLOB_ROOTS_JSON:");
     expect(betaMacAction).toContain('RELEASE_CLOSURE_ENABLED: "false"');
@@ -3046,8 +3039,8 @@ process.stdin.on("end", () => {
     expect(betaWinAction).toContain("tools-release merge-closure-distribution");
     expect(buildJob).toContain("closure-version: ${{ needs.metadata.outputs.closure_version }}");
     expect(betaWinAction).toContain("OD_PACKAGED_E2E_CLOSURE_DISTRIBUTION_MANIFEST_PATH:");
-    expect(betaWinAction).toContain('"OD_RELEASE_EXACT_SMOKE_PROOF=${{ steps.smoke_plan.outputs.decision == \'replay\' && \'hit\' || \'miss\' }}"');
-    expect(betaWinAction).toContain("uses: ./.github/actions/workflow/receipt/request");
+    expect(betaWinAction).toContain('"OD_RELEASE_EXACT_SMOKE_PROOF=${{ steps.smoke_skip.outputs.skip == \'true\' && \'hit\' || \'miss\' }}"');
+    expect(betaWinAction).toContain("uses: ./.github/actions/hash-skip");
     expect(betaWinAction).not.toContain("workflow register-scenario-receipts");
     expect(betaWinAction).toContain("$env:OD_PACKAGED_E2E_CLOSURE_BLOB_ROOTS_JSON = @(");
     expect(betaWinAction).toContain(") | ConvertTo-Json -Compress");

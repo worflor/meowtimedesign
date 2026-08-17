@@ -1,0 +1,37 @@
+name: Hash skip
+description: Skip a caller-defined unit when its declared input hash has already completed successfully
+
+inputs:
+  hash_skip:
+    description: Declaration key under .github/hash_skip
+    required: true
+  mode:
+    description: normal, verify, or quarantine
+    required: false
+    default: normal
+
+outputs:
+  hash:
+    value: ${{ steps.resolve.outputs.hash }}
+  reason:
+    value: ${{ inputs.mode == 'quarantine' && 'quarantine' || inputs.mode == 'verify' && 'verify' || steps.cache.outputs.cache-hit == 'true' && 'hit' || 'miss' }}
+  run:
+    value: ${{ inputs.mode != 'normal' || steps.cache.outputs.cache-hit != 'true' }}
+  skip:
+    value: ${{ inputs.mode == 'normal' && steps.cache.outputs.cache-hit == 'true' }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve declared hash
+      id: resolve
+      shell: bash
+      run: node --experimental-strip-types .github/scripts/hash_skip.ts "${{ inputs.hash_skip }}" --mode "${{ inputs.mode }}"
+    - name: Resolve successful execution cache
+      id: cache
+      if: ${{ inputs.mode != 'quarantine' }}
+      uses: actions/cache@v5.0.5
+      with:
+        key: ${{ steps.resolve.outputs.cache_key }}
+        lookup-only: true
+        path: ${{ steps.resolve.outputs.marker }}

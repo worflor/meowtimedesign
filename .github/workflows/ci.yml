@@ -161,8 +161,8 @@ jobs:
         with:
           node-version-file: package.json
 
-      - name: Self-check atomic workflow protocol
-        run: node --experimental-strip-types .github/scripts/workflow.ts self-check
+      - name: Self-check hash skip protocol
+        run: node --experimental-strip-types .github/scripts/hash_skip.ts self-check
 
       - name: Install actionlint and ShellCheck
         run: |
